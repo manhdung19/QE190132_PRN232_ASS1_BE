@@ -35,11 +35,17 @@ public interface IProjectRepository : IRepository<Project>
 public interface ITagRepository : IRepository<Tag>
 {
     Task<IReadOnlyList<Tag>> GetAllAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Tag>> GetTrackedByIdsAsync(IEnumerable<int> ids, CancellationToken cancellationToken = default);
     Task<bool> HasTasksAsync(int id, CancellationToken cancellationToken = default);
     void Remove(Tag entity);
 }
 public interface ITaskRepository : IRepository<TaskEntity>
 {
+    Task<IReadOnlyList<TaskEntity>> GetActiveAsync(CancellationToken cancellationToken = default);
+    Task<TaskEntity?> GetActiveDetailAsync(int id, CancellationToken cancellationToken = default);
+    Task<TaskEntity?> FindTrackedDetailAsync(int id, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<TaskEntity>> GetActiveByProjectAsync(int projectId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<TaskEntity>> SearchActiveAsync(string? title, short? status, short? priority, int? projectId, int? tagId, CancellationToken cancellationToken = default);
     System.Threading.Tasks.Task LoadTagsAsync(TaskEntity entity, CancellationToken cancellationToken = default);
     // No Remove: tasks may only be soft deleted through tracked IsActive changes.
 }

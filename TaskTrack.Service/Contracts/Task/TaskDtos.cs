@@ -16,6 +16,8 @@ public abstract class TaskWriteRequest : IValidatableObject
 
     public IEnumerable<ValidationResult> Validate(ValidationContext context)
     {
+        if (string.IsNullOrWhiteSpace(Title))
+            yield return new ValidationResult("The Title field is required.", [nameof(Title)]);
         if (tagIds.Any(id => id <= 0))
             yield return new ValidationResult("Tag IDs must be positive.", [nameof(TagIds)]);
     }

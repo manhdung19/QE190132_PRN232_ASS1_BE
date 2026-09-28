@@ -111,6 +111,9 @@ public sealed class TagRepository(TaskManagementDbContext context) : Repository<
     public async Task<IReadOnlyList<Tag>> GetAllAsync(CancellationToken cancellationToken = default) =>
         await Context.Tags.AsNoTracking().OrderBy(x => x.TagId).ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<Tag>> GetTrackedByIdsAsync(IEnumerable<int> ids, CancellationToken cancellationToken = default) =>
+        await Context.Tags.Where(x => ids.Contains(x.TagId)).ToListAsync(cancellationToken);
+
     public Task<bool> HasTasksAsync(int id, CancellationToken cancellationToken = default) =>
         Context.Tags.AnyAsync(x => x.TagId == id && x.Tasks.Any(), cancellationToken);
     public void Remove(Tag entity) => Context.Tags.Remove(entity);
@@ -119,4 +122,65 @@ public sealed class TaskRepository(TaskManagementDbContext context) : Repository
 {
     public AsyncTask LoadTagsAsync(TaskEntity entity, CancellationToken cancellationToken = default) =>
         Context.Entry(entity).Collection(x => x.Tags).LoadAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<TaskEntity>> GetActiveAsync(CancellationToken cancellationToken = default) =>
+        await Context.Tasks.AsNoTracking()
+            .Include(x => x.Tags)
+            .Where(x => x.IsActive)
+            .OrderBy(x => x.TaskId)
+            .ToListAsync(cancellationToken);
+
+    public Task<TaskEntity?> GetActiveDetailAsync(int id, CancellationToken cancellationToken = default) =>
+        Context.Tasks.AsNoTracking()
+            .Include(x => x.Tags)
+            .SingleOrDefaultAsync(x => x.TaskId == id && x.IsActive, cancellationToken);
+
+    public Task<TaskEntity?> FindTrackedDetailAsync(int id, CancellationToken cancellationToken = default) =>
+        Context.Tasks
+            .Include(x => x.Tags)
+            .SingleOrDefaultAsync(x => x.TaskId == id, cancellationToken);
+
+    public async Task<IReadOnlyList<TaskEntity>> GetActiveByProjectAsync(int projectId, CancellationToken cancellationToken = default) =>
+        await Context.Tasks.AsNoTracking()
+            .Include(x => x.Tags)
+            .Where(x => x.ProjectId == projectId && x.IsActive)
+            .OrderBy(x => x.TaskId)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<TaskEntity>> SearchActiveAsync(
+        string? title, short? status, short? priority, int? projectId, int? tagId, CancellationToken cancellationToken = default)
+    {
+        var query = Context.Tasks.AsNoTracking()
+            .Include(x => x.Tags)
+            .Where(x => x.IsActive);
+
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            var pattern = "%" + title.Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+            query = query.Where(x => EF.Functions.ILike(x.Title, pattern, "\\"));
+        }
+
+        if (status.HasValue)
+        {
+            query = query.Where(x => x.Status == status.Value);
+        }
+
+        if (priority.HasValue)
+        {
+            query = query.Where(x => x.Priority == priority.Value);
+        }
+
+        if (projectId.HasValue)
+        {
+            query = query.Where(x => x.ProjectId == projectId.Value);
+        }
+
+        if (tagId.HasValue)
+        {
+            query = query.Where(x => x.Tags.Any(t => t.TagId == tagId.Value));
+        }
+
+        return await query.OrderBy(x => x.TaskId).ToListAsync(cancellationToken);
+    }
 }
+

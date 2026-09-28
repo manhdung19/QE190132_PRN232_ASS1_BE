@@ -1,6 +1,7 @@
 using DepartmentEntity = TaskTrack.Repo.Models.Department;
 using ProjectEntity = TaskTrack.Repo.Models.Project;
 using TagEntity = TaskTrack.Repo.Models.Tag;
+using TaskEntity = TaskTrack.Repo.Models.Task;
 using TaskTrack.Repo.Repositories;
 using TaskTrack.Service.Contracts;
 using TaskTrack.Service.Errors;
@@ -43,6 +44,13 @@ public interface ITagService
 }
 public interface ITaskService
 {
+    Task<IReadOnlyList<TaskListItem>> GetAllAsync(CancellationToken cancellationToken = default);
+    Task<TaskDetail> GetByIdAsync(int id, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<TaskListItem>> GetByProjectAsync(int projectId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<TaskListItem>> SearchAsync(TaskSearchRequest request, CancellationToken cancellationToken = default);
+    Task<TaskDetail> CreateAsync(TaskCreateRequest request, CancellationToken cancellationToken = default);
+    Task<TaskDetail> UpdateAsync(int id, TaskUpdateRequest request, CancellationToken cancellationToken = default);
+    Task DeleteAsync(int id, CancellationToken cancellationToken = default);
     void Validate(TaskWriteRequest request);
     Task EnsureExistsAsync(int id, CancellationToken cancellationToken = default);
 }
@@ -268,8 +276,130 @@ public sealed class TagService(ITagRepository repository, IUnitOfWork unitOfWork
             throw new ServiceException(ServiceErrorKind.NotFound);
     }
 }
-public sealed class TaskService(ITaskRepository repository) : ITaskService
+public sealed class TaskService(
+    ITaskRepository repository,
+    IProjectRepository projectRepository,
+    ITagRepository tagRepository,
+    IUnitOfWork unitOfWork) : ITaskService
 {
+    public async Task<IReadOnlyList<TaskListItem>> GetAllAsync(CancellationToken cancellationToken = default) =>
+        (await repository.GetActiveAsync(cancellationToken)).Select(x => x.ToListItem()).ToArray();
+
+    public async Task<TaskDetail> GetByIdAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var task = await repository.GetActiveDetailAsync(id, cancellationToken)
+            ?? throw new ServiceException(ServiceErrorKind.NotFound);
+        return task.ToDetail();
+    }
+
+    public async Task<IReadOnlyList<TaskListItem>> GetByProjectAsync(int projectId, CancellationToken cancellationToken = default)
+    {
+        if (!await projectRepository.ExistsAsync(x => x.ProjectId == projectId && x.IsActive, cancellationToken))
+            throw new ServiceException(ServiceErrorKind.NotFound);
+        return (await repository.GetActiveByProjectAsync(projectId, cancellationToken)).Select(x => x.ToListItem()).ToArray();
+    }
+
+    public async Task<IReadOnlyList<TaskListItem>> SearchAsync(TaskSearchRequest request, CancellationToken cancellationToken = default)
+    {
+        RequestValidation.Validate(request);
+        var status = request.Status.HasValue ? (short)request.Status.Value : (short?)null;
+        var priority = request.Priority.HasValue ? (short)request.Priority.Value : (short?)null;
+        return (await repository.SearchActiveAsync(request.Title, status, priority, request.ProjectId, request.TagId, cancellationToken))
+            .Select(x => x.ToListItem()).ToArray();
+    }
+
+    public async Task<TaskDetail> CreateAsync(TaskCreateRequest request, CancellationToken cancellationToken = default)
+    {
+        Validate(request);
+
+        if (!await projectRepository.ExistsAsync(x => x.ProjectId == request.ProjectId && x.IsActive, cancellationToken))
+            throw ServiceException.Invalid("projectId", "The specified project does not exist or is inactive.");
+
+        var tagIds = request.TagIds ?? [];
+        IReadOnlyList<TagEntity> trackedTags = [];
+        if (tagIds.Length > 0)
+        {
+            trackedTags = await tagRepository.GetTrackedByIdsAsync(tagIds, cancellationToken);
+            if (trackedTags.Count != tagIds.Length)
+                throw ServiceException.Invalid("tagIds", "One or more tag IDs do not exist.");
+        }
+
+        var entity = new TaskEntity
+        {
+            Title = request.Title,
+            Description = request.Description,
+            Status = (short)request.Status,
+            Priority = (short)request.Priority,
+            DueDate = request.DueDate,
+            ProjectId = request.ProjectId,
+            IsActive = true,
+            CreatedDate = DatabaseTime.UtcNow(),
+            ModifiedDate = null
+        };
+
+        foreach (var tag in trackedTags)
+        {
+            entity.Tags.Add(tag);
+        }
+
+        repository.Add(entity);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return entity.ToDetail();
+    }
+
+    public async Task<TaskDetail> UpdateAsync(int id, TaskUpdateRequest request, CancellationToken cancellationToken = default)
+    {
+        Validate(request);
+
+        var entity = await repository.FindTrackedDetailAsync(id, cancellationToken)
+            ?? throw new ServiceException(ServiceErrorKind.NotFound);
+
+        if (!entity.IsActive)
+            throw new ServiceException(ServiceErrorKind.NotFound);
+
+        if (!await projectRepository.ExistsAsync(x => x.ProjectId == request.ProjectId && x.IsActive, cancellationToken))
+            throw ServiceException.Invalid("projectId", "The specified project does not exist or is inactive.");
+
+        var tagIds = request.TagIds ?? [];
+        IReadOnlyList<TagEntity> trackedTags = [];
+        if (tagIds.Length > 0)
+        {
+            trackedTags = await tagRepository.GetTrackedByIdsAsync(tagIds, cancellationToken);
+            if (trackedTags.Count != tagIds.Length)
+                throw ServiceException.Invalid("tagIds", "One or more tag IDs do not exist.");
+        }
+
+        entity.Tags.Clear();
+        foreach (var tag in trackedTags)
+        {
+            entity.Tags.Add(tag);
+        }
+
+        entity.Title = request.Title;
+        entity.Description = request.Description;
+        entity.Status = (short)request.Status;
+        entity.Priority = (short)request.Priority;
+        entity.DueDate = request.DueDate;
+        entity.ProjectId = request.ProjectId;
+        entity.ModifiedDate = DatabaseTime.UtcNow();
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return entity.ToDetail();
+    }
+
+    public async Task DeleteAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var entity = await repository.FindAsync(id, cancellationToken)
+            ?? throw new ServiceException(ServiceErrorKind.NotFound);
+
+        if (!entity.IsActive)
+            throw new ServiceException(ServiceErrorKind.NotFound);
+
+        entity.IsActive = false;
+        entity.ModifiedDate = DatabaseTime.UtcNow();
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
     public void Validate(TaskWriteRequest request) => RequestValidation.Validate(request);
     public async Task EnsureExistsAsync(int id, CancellationToken cancellationToken = default)
     {
@@ -277,3 +407,4 @@ public sealed class TaskService(ITaskRepository repository) : ITaskService
             throw new ServiceException(ServiceErrorKind.NotFound);
     }
 }
+
