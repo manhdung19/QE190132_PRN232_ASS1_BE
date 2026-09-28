@@ -48,6 +48,53 @@ public sealed class DepartmentRepository(TaskManagementDbContext context) : Repo
 }
 public sealed class ProjectRepository(TaskManagementDbContext context) : Repository<Project>(context), IProjectRepository
 {
+    public async Task<IReadOnlyList<Project>> GetActiveAsync(CancellationToken cancellationToken = default) =>
+        await Context.Projects.AsNoTracking()
+            .Include(x => x.Department)
+            .Where(x => x.IsActive)
+            .OrderBy(x => x.ProjectId)
+            .ToListAsync(cancellationToken);
+
+    public Task<Project?> GetActiveDetailAsync(int id, CancellationToken cancellationToken = default) =>
+        Context.Projects.AsNoTracking()
+            .Include(x => x.Department)
+            .Include(x => x.Tasks.Where(t => t.IsActive).OrderBy(t => t.TaskId))
+                .ThenInclude(t => t.Tags)
+            .SingleOrDefaultAsync(x => x.ProjectId == id && x.IsActive, cancellationToken);
+
+    public async Task<IReadOnlyList<Project>> GetActiveByDepartmentAsync(int departmentId, CancellationToken cancellationToken = default) =>
+        await Context.Projects.AsNoTracking()
+            .Include(x => x.Department)
+            .Where(x => x.DepartmentId == departmentId && x.IsActive)
+            .OrderBy(x => x.ProjectId)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<Project>> SearchActiveAsync(
+        string? name, short? status, int? departmentId, CancellationToken cancellationToken = default)
+    {
+        var query = Context.Projects.AsNoTracking()
+            .Include(x => x.Department)
+            .Where(x => x.IsActive);
+
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            var pattern = "%" + name.Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+            query = query.Where(x => EF.Functions.ILike(x.ProjectName, pattern, "\\"));
+        }
+
+        if (status.HasValue)
+        {
+            query = query.Where(x => x.Status == status.Value);
+        }
+
+        if (departmentId.HasValue)
+        {
+            query = query.Where(x => x.DepartmentId == departmentId.Value);
+        }
+
+        return await query.OrderBy(x => x.ProjectId).ToListAsync(cancellationToken);
+    }
+
     public Task<bool> HasTasksAsync(int id, CancellationToken cancellationToken = default) =>
         Context.Tasks.AnyAsync(x => x.ProjectId == id, cancellationToken);
     public void Remove(Project entity) => Context.Projects.Remove(entity);
