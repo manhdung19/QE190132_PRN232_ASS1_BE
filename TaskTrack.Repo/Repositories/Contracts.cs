@@ -18,6 +18,7 @@ public interface IDepartmentRepository : IRepository<Department>
 {
     Task<IReadOnlyList<Department>> GetActiveAsync(string? name = null, CancellationToken cancellationToken = default);
     Task<Department?> GetActiveDetailAsync(int id, CancellationToken cancellationToken = default);
+    Task<Department?> FindTrackedDetailAsync(int id, CancellationToken cancellationToken = default);
     Task<bool> HasProjectsAsync(int id, CancellationToken cancellationToken = default);
     void Remove(Department entity);
 }

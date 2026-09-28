@@ -37,6 +37,11 @@ public sealed class DepartmentRepository(TaskManagementDbContext context) : Repo
             .Include(x => x.Projects.Where(p => p.IsActive).OrderBy(p => p.ProjectId))
             .SingleOrDefaultAsync(x => x.DepartmentId == id && x.IsActive, cancellationToken);
 
+    public Task<Department?> FindTrackedDetailAsync(int id, CancellationToken cancellationToken = default) =>
+        Context.Departments
+            .Include(x => x.Projects.Where(p => p.IsActive).OrderBy(p => p.ProjectId))
+            .SingleOrDefaultAsync(x => x.DepartmentId == id, cancellationToken);
+
     public Task<bool> HasProjectsAsync(int id, CancellationToken cancellationToken = default) =>
         Context.Projects.AnyAsync(x => x.DepartmentId == id, cancellationToken);
     public void Remove(Department entity) => Context.Departments.Remove(entity);
