@@ -1,5 +1,6 @@
 using DepartmentEntity = TaskTrack.Repo.Models.Department;
 using ProjectEntity = TaskTrack.Repo.Models.Project;
+using TagEntity = TaskTrack.Repo.Models.Tag;
 using TaskTrack.Repo.Repositories;
 using TaskTrack.Service.Contracts;
 using TaskTrack.Service.Errors;
@@ -33,6 +34,10 @@ public interface IProjectService
 }
 public interface ITagService
 {
+    Task<IReadOnlyList<TagListItem>> GetAllAsync(CancellationToken cancellationToken = default);
+    Task<TagDetail> CreateAsync(TagCreateRequest request, CancellationToken cancellationToken = default);
+    Task<TagDetail> UpdateAsync(int id, TagUpdateRequest request, CancellationToken cancellationToken = default);
+    Task DeleteAsync(int id, CancellationToken cancellationToken = default);
     void Validate(TagWriteRequest request);
     Task EnsureExistsAsync(int id, CancellationToken cancellationToken = default);
 }
@@ -207,8 +212,55 @@ public sealed class ProjectService(
             throw new ServiceException(ServiceErrorKind.NotFound);
     }
 }
-public sealed class TagService(ITagRepository repository) : ITagService
+public sealed class TagService(ITagRepository repository, IUnitOfWork unitOfWork) : ITagService
 {
+    public async Task<IReadOnlyList<TagListItem>> GetAllAsync(CancellationToken cancellationToken = default) =>
+        (await repository.GetAllAsync(cancellationToken)).Select(x => x.ToListItem()).ToArray();
+
+    public async Task<TagDetail> CreateAsync(TagCreateRequest request, CancellationToken cancellationToken = default)
+    {
+        Validate(request);
+        if (await repository.ExistsAsync(x => x.TagName == request.TagName, cancellationToken))
+            throw ServiceException.Invalid("tagName", "The tag name already exists.");
+
+        var entity = new TagEntity
+        {
+            TagName = request.TagName,
+            Color = request.Color
+        };
+        repository.Add(entity);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return entity.ToDetail();
+    }
+
+    public async Task<TagDetail> UpdateAsync(int id, TagUpdateRequest request, CancellationToken cancellationToken = default)
+    {
+        Validate(request);
+        var entity = await repository.FindAsync(id, cancellationToken)
+            ?? throw new ServiceException(ServiceErrorKind.NotFound);
+
+        if (await repository.ExistsAsync(x => x.TagName == request.TagName && x.TagId != id, cancellationToken))
+            throw ServiceException.Invalid("tagName", "The tag name already exists.");
+
+        entity.TagName = request.TagName;
+        entity.Color = request.Color;
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return entity.ToDetail();
+    }
+
+    public async Task DeleteAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var entity = await repository.FindAsync(id, cancellationToken)
+            ?? throw new ServiceException(ServiceErrorKind.NotFound);
+
+        if (await repository.HasTasksAsync(id, cancellationToken))
+            throw ServiceException.Blocked("Cannot delete tag that is associated with tasks.");
+
+        repository.Remove(entity);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
     public void Validate(TagWriteRequest request) => RequestValidation.Validate(request);
     public async Task EnsureExistsAsync(int id, CancellationToken cancellationToken = default)
     {

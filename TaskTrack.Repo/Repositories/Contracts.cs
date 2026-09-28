@@ -34,6 +34,7 @@ public interface IProjectRepository : IRepository<Project>
 }
 public interface ITagRepository : IRepository<Tag>
 {
+    Task<IReadOnlyList<Tag>> GetAllAsync(CancellationToken cancellationToken = default);
     Task<bool> HasTasksAsync(int id, CancellationToken cancellationToken = default);
     void Remove(Tag entity);
 }

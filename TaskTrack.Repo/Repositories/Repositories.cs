@@ -108,6 +108,9 @@ public sealed class ProjectRepository(TaskManagementDbContext context) : Reposit
 }
 public sealed class TagRepository(TaskManagementDbContext context) : Repository<Tag>(context), ITagRepository
 {
+    public async Task<IReadOnlyList<Tag>> GetAllAsync(CancellationToken cancellationToken = default) =>
+        await Context.Tags.AsNoTracking().OrderBy(x => x.TagId).ToListAsync(cancellationToken);
+
     public Task<bool> HasTasksAsync(int id, CancellationToken cancellationToken = default) =>
         Context.Tags.AnyAsync(x => x.TagId == id && x.Tasks.Any(), cancellationToken);
     public void Remove(Tag entity) => Context.Tags.Remove(entity);
