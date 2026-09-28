@@ -20,6 +20,23 @@ public abstract class Repository<T>(TaskManagementDbContext context) : IReposito
 }
 public sealed class DepartmentRepository(TaskManagementDbContext context) : Repository<Department>(context), IDepartmentRepository
 {
+    public async Task<IReadOnlyList<Department>> GetActiveAsync(string? name = null, CancellationToken cancellationToken = default)
+    {
+        var query = Context.Departments.AsNoTracking().Where(x => x.IsActive);
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            // Escape LIKE metacharacters so client input is a literal substring.
+            var pattern = "%" + name.Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+            query = query.Where(x => EF.Functions.ILike(x.DepartmentName, pattern, "\\"));
+        }
+        return await query.OrderBy(x => x.DepartmentId).ToListAsync(cancellationToken);
+    }
+
+    public Task<Department?> GetActiveDetailAsync(int id, CancellationToken cancellationToken = default) =>
+        Context.Departments.AsNoTracking()
+            .Include(x => x.Projects.Where(p => p.IsActive).OrderBy(p => p.ProjectId))
+            .SingleOrDefaultAsync(x => x.DepartmentId == id && x.IsActive, cancellationToken);
+
     public Task<bool> HasProjectsAsync(int id, CancellationToken cancellationToken = default) =>
         Context.Projects.AnyAsync(x => x.DepartmentId == id, cancellationToken);
     public void Remove(Department entity) => Context.Departments.Remove(entity);

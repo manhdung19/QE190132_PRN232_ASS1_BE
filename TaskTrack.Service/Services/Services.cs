@@ -1,12 +1,16 @@
 using TaskTrack.Repo.Repositories;
 using TaskTrack.Service.Contracts;
 using TaskTrack.Service.Errors;
+using TaskTrack.Service.Mapping;
 
 namespace TaskTrack.Service.Services;
 
 // Foundation contracts. CRUD/search methods are added with tasks 005–015.
 public interface IDepartmentService
 {
+    Task<IReadOnlyList<DepartmentListItem>> GetAllAsync(CancellationToken cancellationToken = default);
+    Task<DepartmentDetail> GetByIdAsync(int id, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<DepartmentListItem>> SearchAsync(DepartmentSearchRequest request, CancellationToken cancellationToken = default);
     void Validate(DepartmentWriteRequest request);
     Task EnsureExistsAsync(int id, CancellationToken cancellationToken = default);
 }
@@ -27,6 +31,19 @@ public interface ITaskService
 }
 public sealed class DepartmentService(IDepartmentRepository repository) : IDepartmentService
 {
+    public async Task<IReadOnlyList<DepartmentListItem>> GetAllAsync(CancellationToken cancellationToken = default) =>
+        (await repository.GetActiveAsync(cancellationToken: cancellationToken)).Select(x => x.ToListItem()).ToArray();
+
+    public async Task<DepartmentDetail> GetByIdAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var department = await repository.GetActiveDetailAsync(id, cancellationToken)
+            ?? throw new ServiceException(ServiceErrorKind.NotFound);
+        return department.ToDetail();
+    }
+
+    public async Task<IReadOnlyList<DepartmentListItem>> SearchAsync(DepartmentSearchRequest request, CancellationToken cancellationToken = default) =>
+        (await repository.GetActiveAsync(request.Name, cancellationToken)).Select(x => x.ToListItem()).ToArray();
+
     public void Validate(DepartmentWriteRequest request) => RequestValidation.Validate(request);
     public async Task EnsureExistsAsync(int id, CancellationToken cancellationToken = default)
     {
