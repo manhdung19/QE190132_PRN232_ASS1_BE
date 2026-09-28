@@ -1,4 +1,4 @@
-﻿# QE190132_PRN232_Ass1_BE
+# QE190132_PRN232_Ass1_BE
 
 ASP.NET Core Web API .NET 8. Project references: API -> Service -> Repo.
 
@@ -16,7 +16,7 @@ Swagger: http://localhost:5200/swagger. Health: http://localhost:5200/api/health
 
 API đọc `DATABASE_URL` từ môi trường, chuyển URL PostgreSQL sang Npgsql connection string bằng `PostgresConnection.FromUrl`. Có thể thay bằng `ConnectionStrings__TaskTrack` dạng Npgsql nếu không đặt DATABASE_URL. Không ghi secret vào appsettings/source. ASP.NET Core không tự đọc `.env` hoặc file `DATABASE_URL` ở workspace.
 
-`TaskManagementDbContext` được đăng ký scoped qua DI. Chưa triển khai các repository/service CRUD; controller không truy cập database trực tiếp. Chưa chạy migration hay EnsureCreated.
+`TaskManagementDbContext` được đăng ký scoped qua DI. Đã triển khai khung repository/service, DTO, validation và xử lý lỗi (task 001–004); chưa triển khai endpoint CRUD/search (task 005–015). Controller không truy cập database trực tiếp. Xem [hợp đồng API](docs/API-CONTRACT.md) và [hướng dẫn nền tảng/kiểm tra](docs/FOUNDATION.md). Chưa chạy migration hay EnsureCreated.
 
 ## Giai đoạn B: import và scaffold đã kiểm tra
 

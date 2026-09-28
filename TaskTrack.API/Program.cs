@@ -1,6 +1,10 @@
 using TaskTrack.Repo.Configuration;
 using TaskTrack.Repo.Data;
 using Microsoft.EntityFrameworkCore;
+using TaskTrack.Repo;
+using TaskTrack.Service;
+using TaskTrack.API.Errors;
+using Microsoft.AspNetCore.Mvc.ModelBinding.Metadata;
 
 var builder = WebApplication.CreateBuilder(args);
 var databaseUrl = builder.Configuration["DATABASE_URL"];
@@ -18,12 +22,17 @@ builder.Services.AddDbContext<TaskManagementDbContext>(options =>
     options.UseNpgsql(connectionString);
 });
 
-builder.Services.AddControllers();
+builder.Services.AddTaskTrackRepositories();
+builder.Services.AddTaskTrackServices();
+builder.Services.AddControllers(options =>
+    options.ModelMetadataDetailsProviders.Add(new SystemTextJsonValidationMetadataProvider()))
+    .ConfigureApiBehaviorOptions(options => options.InvalidModelStateResponseFactory = ApiErrors.InvalidModelState);
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
+app.UseMiddleware<ApiExceptionMiddleware>();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
