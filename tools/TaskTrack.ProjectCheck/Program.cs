@@ -33,6 +33,20 @@ try
         checks++;
     }
 
+    // Cleanup any temporary test projects from previous aborted runs
+    var writableOptions = new DbContextOptionsBuilder<TaskManagementDbContext>().UseNpgsql(rawConnectionString).Options;
+    await using (var cleanDb = new TaskManagementDbContext(writableOptions))
+    {
+        var tempProjects = await cleanDb.Projects
+            .Where(p => p.ProjectName.StartsWith("QA Integration Testing") || p.ProjectName.StartsWith("Past Project"))
+            .ToListAsync();
+        if (tempProjects.Count > 0)
+        {
+            cleanDb.Projects.RemoveRange(tempProjects);
+            await cleanDb.SaveChangesAsync();
+        }
+    }
+
     // Direct repository checks against real PostgreSQL.
     var options = new DbContextOptionsBuilder<TaskManagementDbContext>().UseNpgsql(connection.ConnectionString).Options;
     await using (var db = new TaskManagementDbContext(options))
@@ -178,15 +192,156 @@ try
     using var invalidDeptRoute = await client.GetAsync("/api/projects/department/not-an-int");
     Check(invalidDeptRoute.StatusCode == HttpStatusCode.NotFound, "Integer route constraint on department/{departmentId}");
 
+    async Task<(HttpStatusCode StatusCode, JsonElement Body, HttpResponseMessage Raw)> SendJson(HttpMethod method, string path, object? payload = null)
+    {
+        var message = new HttpRequestMessage(method, path);
+        if (payload is not null)
+        {
+            var json = JsonSerializer.Serialize(payload);
+            message.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        }
+        var response = await client.SendAsync(message);
+        var content = await response.Content.ReadAsStringAsync();
+        JsonElement root = default;
+        if (!string.IsNullOrWhiteSpace(content))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(content);
+                root = doc.RootElement.Clone();
+            }
+            catch (JsonException) { }
+        }
+        return (response.StatusCode, root, response);
+    }
+
+    // Task 008: Validation errors on POST and PUT
+    foreach (var (badPayload, expectedField) in new (object Payload, string Field)[] {
+        (new { projectName = "", startDate = "2024-01-01", departmentId = 1 }, "projectName"),
+        (new { projectName = "   ", startDate = "2024-01-01", departmentId = 1 }, "projectName"),
+        (new { projectName = new string('A', 201), startDate = "2024-01-01", departmentId = 1 }, "projectName"),
+        (new { projectName = "Valid", startDate = (string?)null, departmentId = 1 }, "startDate"),
+        (new { projectName = "Valid", startDate = "2024-06-01", endDate = "2024-05-31", departmentId = 1 }, "endDate"),
+        (new { projectName = "Valid", startDate = "2024-01-01", status = 4, departmentId = 1 }, "status"),
+        (new { projectName = "Valid", startDate = "2024-01-01", status = -1, departmentId = 1 }, "status"),
+        (new { projectName = "Valid", startDate = "2024-01-01", departmentId = 0 }, "departmentId"),
+        (new { projectName = "Valid", startDate = "2024-01-01", departmentId = -1 }, "departmentId"),
+        (new { projectName = "Valid", startDate = "2024-01-01", departmentId = 999999 }, "departmentId"),
+        (new { projectName = "Valid", startDate = "2024-01-01", departmentId = 6 }, "departmentId"), // Department 6 is inactive
+    })
+    {
+        var (status, body, resp) = await SendJson(HttpMethod.Post, "/api/projects", badPayload);
+        resp.Dispose();
+        Check(status == HttpStatusCode.BadRequest, $"Validation 400 on bad create payload for {expectedField}");
+        Check(body.GetProperty("errors").TryGetProperty(expectedField, out _), $"Validation error contains {expectedField}");
+    }
+
+    // Task 008: Past dates are accepted
+    var pastPayload = new { projectName = "Past Project", startDate = "2020-01-01", endDate = "2020-12-31", departmentId = 1, isActive = true };
+    var (pastStatus, pastBody, pastResp) = await SendJson(HttpMethod.Post, "/api/projects", pastPayload);
+    Check(pastStatus == HttpStatusCode.Created, "Past dates are accepted");
+    var pastId = pastBody.GetProperty("projectId").GetInt32();
+    pastResp.Dispose();
+    var (_, _, delPast) = await SendJson(HttpMethod.Delete, $"/api/projects/{pastId}");
+    delPast.Dispose();
+
+    // Task 008: Cannot delete project with tasks (Project 1 has tasks)
+    var (delStatus, delBody, delResp) = await SendJson(HttpMethod.Delete, "/api/projects/1");
+    delResp.Dispose();
+    Check(delStatus == HttpStatusCode.BadRequest, "Blocked delete returns 400 when project has tasks");
+    Check(delBody.GetProperty("errors").TryGetProperty("operation", out _), "Blocked delete error maps to operation");
+    var proj1AfterBlocked = await Get("/api/projects/1");
+    Check(proj1AfterBlocked.GetProperty("projectId").GetInt32() == 1, "Project 1 unchanged after blocked delete");
+
+    // Task 008: Inactive or non-existent PUT / DELETE returns 404
+    foreach (var missingId in new[] { 7, 999999, 0, -1 })
+    {
+        var (pStatus, pBody, pResp) = await SendJson(HttpMethod.Put, $"/api/projects/{missingId}",
+            new { projectName = "Updated", startDate = "2024-01-01", departmentId = 1, isActive = true });
+        pResp.Dispose();
+        Check(pStatus == HttpStatusCode.NotFound && pBody.GetProperty("status").GetInt32() == 404, $"PUT {missingId} returns 404");
+
+        var (dStatus, dBody, dResp) = await SendJson(HttpMethod.Delete, $"/api/projects/{missingId}");
+        dResp.Dispose();
+        Check(dStatus == HttpStatusCode.NotFound && dBody.GetProperty("status").GetInt32() == 404, $"DELETE {missingId} returns 404");
+    }
+
+    // Task 008: Complete lifecycle test on temporary project (Create -> Read -> Update -> Delete)
+    var createPayload = new
+    {
+        projectName = "QA Integration Testing",
+        description = "Automated integration suite",
+        startDate = "2024-06-01",
+        endDate = "2024-12-31",
+        status = 0,
+        departmentId = 1,
+        isActive = true
+    };
+    var (createStatus, createBody, createResp) = await SendJson(HttpMethod.Post, "/api/projects", createPayload);
+    Check(createStatus == HttpStatusCode.Created, "POST /api/projects returns 201 Created");
+    var newId = createBody.GetProperty("projectId").GetInt32();
+    Check(newId > 0, "Created project has positive ID");
+    Check(createBody.GetProperty("projectName").GetString() == "QA Integration Testing", "Created name matches");
+    Check(createBody.GetProperty("departmentName").GetString() == "Engineering", "Created departmentName is Engineering");
+    Check(createBody.GetProperty("tasks").GetArrayLength() == 0, "Created project has empty tasks");
+    var initialCreatedDate = createBody.GetProperty("createdDate").GetString();
+    Check(!string.IsNullOrWhiteSpace(initialCreatedDate), "CreatedDate set by server");
+    Check(createResp.Headers.Location is not null && createResp.Headers.Location.OriginalString.EndsWith($"/api/projects/{newId}"), "Location header points to new ID");
+    createResp.Dispose();
+
+    // Verify GET reads newly created project
+    var getCreated = await Get($"/api/projects/{newId}");
+    Check(getCreated.GetProperty("projectName").GetString() == "QA Integration Testing", "GET new project matches");
+
+    // PUT updates newly created project (switch department to 2: Product Management)
+    var updatePayload = new
+    {
+        projectName = "QA Integration Testing v2",
+        description = "Updated automated suite",
+        startDate = "2024-06-01",
+        endDate = "2024-12-31",
+        status = 1,
+        departmentId = 2,
+        isActive = true
+    };
+    var (updateStatus, updateBody, updateResp) = await SendJson(HttpMethod.Put, $"/api/projects/{newId}", updatePayload);
+    updateResp.Dispose();
+    Check(updateStatus == HttpStatusCode.OK, "PUT /api/projects/{id} returns 200 OK");
+    Check(updateBody.GetProperty("projectName").GetString() == "QA Integration Testing v2", "Updated name matches");
+    Check(updateBody.GetProperty("departmentName").GetString() == "Product", "Updated department matches Product");
+    var dbCreatedDate = getCreated.GetProperty("createdDate").GetString();
+    Check(DateTime.Parse(updateBody.GetProperty("createdDate").GetString()!) == DateTime.Parse(dbCreatedDate!), "CreatedDate is preserved on update");
+
+    // Verify GET reads updated project
+    var getUpdated = await Get($"/api/projects/{newId}");
+    Check(getUpdated.GetProperty("projectName").GetString() == "QA Integration Testing v2", "GET updated project matches");
+
+    // DELETE cleans up newly created project
+    var (deleteStatus, _, deleteResp) = await SendJson(HttpMethod.Delete, $"/api/projects/{newId}");
+    deleteResp.Dispose();
+    Check(deleteStatus == HttpStatusCode.NoContent, "DELETE returns 204 NoContent");
+
+    // Verify GET returns 404 after deletion
+    var (getDeletedStatus, _, getDeletedResp) = await SendJson(HttpMethod.Get, $"/api/projects/{newId}");
+    getDeletedResp.Dispose();
+    Check(getDeletedStatus == HttpStatusCode.NotFound, "GET after DELETE returns 404");
+
+    // Verify active count is restored to exactly 6
+    var finalAll = await Get("/api/projects");
+    Check(finalAll.GetArrayLength() == 6, "Database restored: exactly 6 active projects");
+
     // Swagger verification
     var swagger = await Get("/swagger/v1/swagger.json");
     var paths = swagger.GetProperty("paths");
     foreach (var path in new[] { "/api/projects", "/api/projects/{id}", "/api/projects/department/{departmentId}", "/api/projects/search" })
         Check(paths.GetProperty(path).TryGetProperty("get", out _), "Swagger GET " + path);
+    Check(paths.GetProperty("/api/projects").TryGetProperty("post", out _), "Swagger POST /api/projects");
+    Check(paths.GetProperty("/api/projects/{id}").TryGetProperty("put", out _), "Swagger PUT /api/projects/{id}");
+    Check(paths.GetProperty("/api/projects/{id}").TryGetProperty("delete", out _), "Swagger DELETE /api/projects/{id}");
     using var ui = await client.GetAsync("/swagger/index.html");
     Check(ui.IsSuccessStatusCode && (await ui.Content.ReadAsStringAsync()).Contains("Swagger UI"), "Swagger UI served");
 
-    Console.WriteLine($"PASS: {checks} Project checks against real PostgreSQL; all 4 GET endpoints verified.");
+    Console.WriteLine($"PASS: {checks} Project checks against real PostgreSQL; CRUD, validation, and blocked delete verified.");
     return 0;
 }
 catch (CheckFailure failure)

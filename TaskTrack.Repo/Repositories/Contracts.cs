@@ -26,6 +26,7 @@ public interface IProjectRepository : IRepository<Project>
 {
     Task<IReadOnlyList<Project>> GetActiveAsync(CancellationToken cancellationToken = default);
     Task<Project?> GetActiveDetailAsync(int id, CancellationToken cancellationToken = default);
+    Task<Project?> FindTrackedDetailAsync(int id, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Project>> GetActiveByDepartmentAsync(int departmentId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Project>> SearchActiveAsync(string? name, short? status, int? departmentId, CancellationToken cancellationToken = default);
     Task<bool> HasTasksAsync(int id, CancellationToken cancellationToken = default);

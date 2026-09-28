@@ -62,6 +62,13 @@ public sealed class ProjectRepository(TaskManagementDbContext context) : Reposit
                 .ThenInclude(t => t.Tags)
             .SingleOrDefaultAsync(x => x.ProjectId == id && x.IsActive, cancellationToken);
 
+    public Task<Project?> FindTrackedDetailAsync(int id, CancellationToken cancellationToken = default) =>
+        Context.Projects
+            .Include(x => x.Department)
+            .Include(x => x.Tasks.Where(t => t.IsActive).OrderBy(t => t.TaskId))
+                .ThenInclude(t => t.Tags)
+            .SingleOrDefaultAsync(x => x.ProjectId == id, cancellationToken);
+
     public async Task<IReadOnlyList<Project>> GetActiveByDepartmentAsync(int departmentId, CancellationToken cancellationToken = default) =>
         await Context.Projects.AsNoTracking()
             .Include(x => x.Department)

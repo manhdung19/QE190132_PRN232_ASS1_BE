@@ -1,4 +1,5 @@
 using DepartmentEntity = TaskTrack.Repo.Models.Department;
+using ProjectEntity = TaskTrack.Repo.Models.Project;
 using TaskTrack.Repo.Repositories;
 using TaskTrack.Service.Contracts;
 using TaskTrack.Service.Errors;
@@ -24,6 +25,9 @@ public interface IProjectService
     Task<ProjectDetail> GetByIdAsync(int id, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ProjectListItem>> GetByDepartmentAsync(int departmentId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ProjectListItem>> SearchAsync(ProjectSearchRequest request, CancellationToken cancellationToken = default);
+    Task<ProjectDetail> CreateAsync(ProjectCreateRequest request, CancellationToken cancellationToken = default);
+    Task<ProjectDetail> UpdateAsync(int id, ProjectUpdateRequest request, CancellationToken cancellationToken = default);
+    Task DeleteAsync(int id, CancellationToken cancellationToken = default);
     void Validate(ProjectWriteRequest request);
     Task EnsureExistsAsync(int id, CancellationToken cancellationToken = default);
 }
@@ -103,7 +107,10 @@ public sealed class DepartmentService(IDepartmentRepository repository, IUnitOfW
             throw new ServiceException(ServiceErrorKind.NotFound);
     }
 }
-public sealed class ProjectService(IProjectRepository repository, IDepartmentService departmentService) : IProjectService
+public sealed class ProjectService(
+    IProjectRepository repository,
+    IDepartmentRepository departmentRepository,
+    IUnitOfWork unitOfWork) : IProjectService
 {
     public async Task<IReadOnlyList<ProjectListItem>> GetAllAsync(CancellationToken cancellationToken = default) =>
         (await repository.GetActiveAsync(cancellationToken)).Select(x => x.ToListItem()).ToArray();
@@ -117,7 +124,8 @@ public sealed class ProjectService(IProjectRepository repository, IDepartmentSer
 
     public async Task<IReadOnlyList<ProjectListItem>> GetByDepartmentAsync(int departmentId, CancellationToken cancellationToken = default)
     {
-        await departmentService.EnsureExistsAsync(departmentId, cancellationToken);
+        if (!await departmentRepository.ExistsAsync(x => x.DepartmentId == departmentId && x.IsActive, cancellationToken))
+            throw new ServiceException(ServiceErrorKind.NotFound);
         return (await repository.GetActiveByDepartmentAsync(departmentId, cancellationToken)).Select(x => x.ToListItem()).ToArray();
     }
 
@@ -127,6 +135,69 @@ public sealed class ProjectService(IProjectRepository repository, IDepartmentSer
         var status = request.Status.HasValue ? (short)request.Status.Value : (short?)null;
         var list = await repository.SearchActiveAsync(request.Name, status, request.DepartmentId, cancellationToken);
         return list.Select(x => x.ToListItem()).ToArray();
+    }
+
+    public async Task<ProjectDetail> CreateAsync(ProjectCreateRequest request, CancellationToken cancellationToken = default)
+    {
+        Validate(request);
+        var dept = await departmentRepository.FindAsync(request.DepartmentId, cancellationToken);
+        if (dept is null || !dept.IsActive)
+            throw ServiceException.Invalid("departmentId", "The specified department does not exist or is inactive.");
+
+        var entity = new ProjectEntity
+        {
+            ProjectName = request.ProjectName,
+            Description = request.Description,
+            StartDate = request.StartDate!.Value,
+            EndDate = request.EndDate,
+            Status = (short)request.Status,
+            DepartmentId = request.DepartmentId,
+            Department = dept,
+            IsActive = request.IsActive,
+            CreatedDate = DatabaseTime.UtcNow()
+        };
+        repository.Add(entity);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return entity.ToDetail();
+    }
+
+    public async Task<ProjectDetail> UpdateAsync(int id, ProjectUpdateRequest request, CancellationToken cancellationToken = default)
+    {
+        Validate(request);
+        var entity = await repository.FindTrackedDetailAsync(id, cancellationToken)
+            ?? throw new ServiceException(ServiceErrorKind.NotFound);
+        if (!entity.IsActive)
+            throw new ServiceException(ServiceErrorKind.NotFound);
+
+        var dept = await departmentRepository.FindAsync(request.DepartmentId, cancellationToken);
+        if (dept is null || !dept.IsActive)
+            throw ServiceException.Invalid("departmentId", "The specified department does not exist or is inactive.");
+
+        entity.ProjectName = request.ProjectName;
+        entity.Description = request.Description;
+        entity.StartDate = request.StartDate!.Value;
+        entity.EndDate = request.EndDate;
+        entity.Status = (short)request.Status;
+        entity.DepartmentId = request.DepartmentId;
+        entity.Department = dept;
+        entity.IsActive = request.IsActive;
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return entity.ToDetail();
+    }
+
+    public async Task DeleteAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var entity = await repository.FindAsync(id, cancellationToken)
+            ?? throw new ServiceException(ServiceErrorKind.NotFound);
+        if (!entity.IsActive)
+            throw new ServiceException(ServiceErrorKind.NotFound);
+
+        if (await repository.HasTasksAsync(id, cancellationToken))
+            throw ServiceException.Blocked("Cannot delete project with associated tasks.");
+
+        repository.Remove(entity);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     public void Validate(ProjectWriteRequest request) => RequestValidation.Validate(request);
