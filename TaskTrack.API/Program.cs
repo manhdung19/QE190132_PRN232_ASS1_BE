@@ -29,6 +29,12 @@ builder.Services.AddControllers(options =>
     options.ModelMetadataDetailsProviders.Add(new SystemTextJsonValidationMetadataProvider()))
     .ConfigureApiBehaviorOptions(options => options.InvalidModelStateResponseFactory = ApiErrors.InvalidModelState);
 
+var port = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrEmpty(port))
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+}
+
 // CORS configuration reading allowed origins from configuration
 var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
     ?? builder.Configuration["Cors:AllowedOrigins"]?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -38,7 +44,21 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("TaskTrackCorsPolicy", policy =>
     {
-        policy.WithOrigins(configuredOrigins)
+        policy.SetIsOriginAllowed(origin =>
+            {
+                if (configuredOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase))
+                    return true;
+                if (Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+                {
+                    if (uri.Host.EndsWith("vercel.app", StringComparison.OrdinalIgnoreCase) ||
+                        uri.Host == "localhost" ||
+                        uri.Host == "127.0.0.1")
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            })
             .AllowAnyHeader()
             .AllowAnyMethod();
     });

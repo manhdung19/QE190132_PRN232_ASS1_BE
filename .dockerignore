@@ -1,0 +1,10 @@
+**/.git
+**/.vs
+**/bin
+**/obj
+**/.idea
+tools/
+scripts/
+database/
+docs/
+.env*
