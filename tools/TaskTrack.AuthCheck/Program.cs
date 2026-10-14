@@ -9,7 +9,7 @@ using TaskTrack.Repo.Data;
 using TaskTrack.Service.Services;
 
 var stage = args.SingleOrDefault() ?? "register";
-if (stage is not ("register" or "login")) throw new ArgumentException("Unknown auth check stage.");
+if (stage is not ("register" or "login" or "authorization")) throw new ArgumentException("Unknown auth check stage.");
 var connectionString = Environment.GetEnvironmentVariable("A2_TEST_CONNECTION")
     ?? throw new InvalidOperationException("Set A2_TEST_CONNECTION for a disposable local PostgreSQL database.");
 var connection = new NpgsqlConnectionStringBuilder(connectionString);
@@ -118,7 +118,7 @@ try
     }
 
     Console.WriteLine("PASS A2-04: 201 Staff, normalized email, salted PBKDF2, no secret response, 400, 409 and concurrent duplicate 409.");
-    if (stage == "login")
+    if (stage is "login" or "authorization")
     {
         using var login = await client.PostAsJsonAsync("/api/auth/login",
             new { email = " STAFF@EXAMPLE.INVALID ", password });
@@ -155,6 +155,111 @@ try
               await wrongPassword.Content.ReadAsStringAsync() == await wrongEmail.Content.ReadAsStringAsync(),
             "Invalid credentials must return the same 401 response.");
         Console.WriteLine("PASS A2-05: signed JWT claims/expiry, safe response and generic 401.");
+        if (stage == "authorization")
+        {
+            foreach (var resource in new[] { "departments", "projects", "tasks", "tags" })
+            {
+                using var publicGet = await client.GetAsync($"/api/{resource}");
+                Check(publicGet.StatusCode == HttpStatusCode.OK, $"Anonymous GET {resource} failed.");
+                foreach (var method in new[] { HttpMethod.Post, HttpMethod.Put, HttpMethod.Delete })
+                {
+                    var path = method == HttpMethod.Post ? $"/api/{resource}" : $"/api/{resource}/1";
+                    using var message = new HttpRequestMessage(method, path);
+                    if (method != HttpMethod.Delete) message.Content = JsonContent.Create(new { });
+                    using var denied = await client.SendAsync(message);
+                    Check(denied.StatusCode == HttpStatusCode.Unauthorized,
+                        $"Anonymous {method} {resource} did not return 401.");
+                }
+            }
+
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "bad.token.value");
+            using (var bad = await client.PostAsJsonAsync("/api/tags", new { tagName = "Bad Token" }))
+                Check(bad.StatusCode == HttpStatusCode.Unauthorized, "Bad token was accepted.");
+
+            var secretKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(
+                System.Text.Encoding.UTF8.GetBytes("LocalAuthCheckSecretOnly_12345678901234567890"));
+            var expiredJwt = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(
+                claims: [new System.Security.Claims.Claim("accountId", id.ToString()),
+                    new System.Security.Claims.Claim("role", "Staff")],
+                notBefore: DateTime.UtcNow.AddHours(-2), expires: DateTime.UtcNow.AddHours(-1),
+                signingCredentials: new Microsoft.IdentityModel.Tokens.SigningCredentials(
+                    secretKey, Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256));
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Bearer", jwt.WriteToken(expiredJwt));
+            using (var expired = await client.PostAsJsonAsync("/api/tags", new { tagName = "Expired Token" }))
+                Check(expired.StatusCode == HttpStatusCode.Unauthorized, "Expired token was accepted.");
+
+            var unsupportedRoleJwt = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(
+                claims: [new System.Security.Claims.Claim("accountId", id.ToString()),
+                    new System.Security.Claims.Claim("role", "Unknown")],
+                notBefore: DateTime.UtcNow.AddMinutes(-1), expires: DateTime.UtcNow.AddMinutes(10),
+                signingCredentials: new Microsoft.IdentityModel.Tokens.SigningCredentials(
+                    secretKey, Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256));
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Bearer", jwt.WriteToken(unsupportedRoleJwt));
+            using (var forbidden = await client.PostAsJsonAsync("/api/tags", new { tagName = "Unknown Role" }))
+                Check(forbidden.StatusCode == HttpStatusCode.Forbidden, "Unsupported role was accepted.");
+
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokenText);
+            using var tag = await client.PostAsJsonAsync("/api/tags", new { tagName = "A2 Auth Tag" });
+            Check(tag.StatusCode == HttpStatusCode.Created, "Staff cannot create Tag.");
+            using var tagBody = JsonDocument.Parse(await tag.Content.ReadAsStringAsync());
+            var tagId = tagBody.RootElement.GetProperty("tagId").GetInt32();
+            using var updateTag = await client.PutAsJsonAsync($"/api/tags/{tagId}", new { tagName = "A2 Auth Tag Updated" });
+            Check(updateTag.StatusCode == HttpStatusCode.OK, "Staff cannot update Tag.");
+            using var deleteTag = await client.DeleteAsync($"/api/tags/{tagId}");
+            Check(deleteTag.StatusCode == HttpStatusCode.NoContent, "Staff cannot delete Tag.");
+            using var department = await client.PostAsJsonAsync("/api/departments",
+                new { departmentName = "A2 Auth Department", departmentDescription = "Authorization check", isActive = true });
+            Check(department.StatusCode == HttpStatusCode.Created, "Staff cannot create Department.");
+            using var departmentBody = JsonDocument.Parse(await department.Content.ReadAsStringAsync());
+            var departmentId = departmentBody.RootElement.GetProperty("departmentId").GetInt32();
+            using var project = await client.PostAsJsonAsync("/api/projects",
+                new { projectName = "A2 Auth Project", startDate = "2026-10-14", departmentId, status = 0, isActive = true });
+            Check(project.StatusCode == HttpStatusCode.Created, "Staff cannot create Project.");
+            using var projectBody = JsonDocument.Parse(await project.Content.ReadAsStringAsync());
+            var projectId = projectBody.RootElement.GetProperty("projectId").GetInt32();
+            using var task = await client.PostAsJsonAsync("/api/tasks",
+                new { title = "A2 Owned Task", projectId, status = 0, priority = 1, isActive = true, createdById = 999999 });
+            Check(task.StatusCode == HttpStatusCode.Created, "Staff cannot create Task.");
+            using var taskBody = JsonDocument.Parse(await task.Content.ReadAsStringAsync());
+            var taskId = taskBody.RootElement.GetProperty("taskId").GetInt32();
+            await using (var db = new TaskManagementDbContext(options))
+            {
+                var saved = await db.Tasks.AsNoTracking().SingleAsync(x => x.TaskId == taskId);
+                Check(saved.CreatedById == id, "Task ownership was not taken from JWT accountId.");
+            }
+            using var cors = new HttpRequestMessage(HttpMethod.Options, "/api/tasks");
+            cors.Headers.Add("Origin", "http://localhost:3000");
+            cors.Headers.Add("Access-Control-Request-Method", "POST");
+            cors.Headers.Add("Access-Control-Request-Headers", "authorization,content-type");
+            using var preflight = await client.SendAsync(cors);
+            Check(preflight.IsSuccessStatusCode &&
+                  preflight.Headers.TryGetValues("Access-Control-Allow-Headers", out var headers) &&
+                  headers.Any(x => x.Contains("authorization", StringComparison.OrdinalIgnoreCase)),
+                "CORS preflight did not allow Authorization.");
+            await using (var db = new TaskManagementDbContext(options))
+            {
+                var admin = await db.SystemAccounts.SingleAsync(x => x.AccountId == id);
+                admin.Role = 1;
+                await db.SaveChangesAsync();
+            }
+            client.DefaultRequestHeaders.Authorization = null;
+            using var adminLogin = await client.PostAsJsonAsync("/api/auth/login",
+                new { email = "staff@example.invalid", password });
+            Check(adminLogin.StatusCode == HttpStatusCode.OK, "Admin login failed.");
+            using var adminBody = JsonDocument.Parse(await adminLogin.Content.ReadAsStringAsync());
+            var adminToken = adminBody.RootElement.GetProperty("token").GetString()!;
+            Check(jwt.ReadJwtToken(adminToken).Claims.Any(x => x.Type == "role" && x.Value == "Admin"),
+                "Admin role claim is missing.");
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", adminToken);
+            using var adminWrite = await client.PostAsJsonAsync("/api/tags", new { tagName = "A2 Admin Tag" });
+            Check(adminWrite.StatusCode == HttpStatusCode.Created, "Admin cannot write.");
+            Console.WriteLine("PASS A2-06: public GET, 12 anonymous writes 401, invalid/expired 401, Staff CRUD and ownership, Admin write, CORS.");
+        }
     }
 }
 finally

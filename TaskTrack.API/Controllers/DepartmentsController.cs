@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using TaskTrack.Service.Contracts;
 using TaskTrack.Service.Services;
 
@@ -26,6 +27,7 @@ public sealed class DepartmentsController(IDepartmentService service) : Controll
         Ok(await service.SearchAsync(request, cancellationToken));
 
     [HttpPost]
+    [Authorize(Roles = "Staff,Admin")]
     [ProducesResponseType(typeof(DepartmentDetail), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<DepartmentDetail>> Create(
@@ -36,6 +38,7 @@ public sealed class DepartmentsController(IDepartmentService service) : Controll
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = "Staff,Admin")]
     [ProducesResponseType(typeof(DepartmentDetail), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -44,6 +47,7 @@ public sealed class DepartmentsController(IDepartmentService service) : Controll
         Ok(await service.UpdateAsync(id, request, cancellationToken));
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Staff,Admin")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]

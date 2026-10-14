@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using TaskTrack.Service.Contracts;
 using TaskTrack.Service.Services;
 
@@ -34,25 +35,20 @@ public sealed class TasksController(ITaskService service) : ControllerBase
         Ok(await service.SearchAsync(request, cancellationToken));
 
     [HttpPost]
+    [Authorize(Roles = "Staff,Admin")]
     [ProducesResponseType(typeof(TaskDetail), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<TaskDetail>> Create(
         [FromBody] TaskCreateRequest request, CancellationToken cancellationToken)
     {
-        // Authentication is introduced in A2-05/06. Once enabled, only the validated
-        // accountId claim may supply ownership; client JSON has no createdById field.
-        int? creatorAccountId = null;
-        if (User.Identity?.IsAuthenticated == true)
-        {
-            if (!int.TryParse(User.FindFirst("accountId")?.Value, out var accountId) || accountId <= 0)
-                return Unauthorized();
-            creatorAccountId = accountId;
-        }
-        var created = await service.CreateAsync(request, creatorAccountId, cancellationToken);
+        if (!int.TryParse(User.FindFirst("accountId")?.Value, out var accountId) || accountId <= 0)
+            return Unauthorized();
+        var created = await service.CreateAsync(request, accountId, cancellationToken);
         return CreatedAtAction(nameof(GetById), new { id = created.TaskId }, created);
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = "Staff,Admin")]
     [ProducesResponseType(typeof(TaskDetail), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -61,6 +57,7 @@ public sealed class TasksController(ITaskService service) : ControllerBase
         Ok(await service.UpdateAsync(id, request, cancellationToken));
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Staff,Admin")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)

@@ -7,6 +7,8 @@ using TaskTrack.API.Errors;
 using Microsoft.AspNetCore.Mvc.ModelBinding.Metadata;
 using Microsoft.OpenApi.Models;
 using TaskTrack.API.Security;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 var databaseUrl = builder.Configuration["DATABASE_URL"];
@@ -27,6 +29,22 @@ builder.Services.AddDbContext<TaskManagementDbContext>(options =>
 builder.Services.AddTaskTrackRepositories();
 builder.Services.AddTaskTrackServices();
 builder.Services.AddSingleton<JwtTokenService>();
+var signingKey = new JwtTokenService(builder.Configuration).GetSigningKey();
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
+{
+    options.MapInboundClaims = false;
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = false,
+        ValidateAudience = false,
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = signingKey,
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.Zero,
+        RoleClaimType = "role"
+    };
+});
+builder.Services.AddAuthorization();
 builder.Services.AddControllers(options =>
     options.ModelMetadataDetailsProviders.Add(new SystemTextJsonValidationMetadataProvider()))
     .ConfigureApiBehaviorOptions(options => options.InvalidModelStateResponseFactory = ApiErrors.InvalidModelState);
@@ -77,10 +95,10 @@ builder.Services.AddSwaggerGen(c =>
         Description = """
             ### PRN232 Assignment 1 — Task & Team Management API (QE190132)
             
-            Public Web API for managing Departments, Projects, Tasks, and Tags.
+            API for managing Departments, Projects, Tasks, and Tags.
             
             #### Business Rules & Specifications:
-            - **Public Access**: All 24 endpoints are public and do not require authentication or Bearer tokens.
+            - **Access**: GET endpoints are public. POST/PUT/DELETE require a valid Bearer token.
             - **Enums**:
               - **ProjectStatus**: `0` = NotStarted, `1` = InProgress, `2` = Completed, `3` = OnHold.
               - **TaskStatus**: `0` = ToDo, `1` = InProgress, `2` = Done, `3` = Cancelled.
@@ -120,6 +138,7 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseCors("TaskTrackCorsPolicy");
+app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
