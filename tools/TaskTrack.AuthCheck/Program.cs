@@ -9,7 +9,7 @@ using TaskTrack.Repo.Data;
 using TaskTrack.Service.Services;
 
 var stage = args.SingleOrDefault() ?? "register";
-if (stage is not ("register" or "login" or "authorization")) throw new ArgumentException("Unknown auth check stage.");
+if (stage is not ("register" or "login" or "authorization" or "accounts")) throw new ArgumentException("Unknown auth check stage.");
 var connectionString = Environment.GetEnvironmentVariable("A2_TEST_CONNECTION")
     ?? throw new InvalidOperationException("Set A2_TEST_CONNECTION for a disposable local PostgreSQL database.");
 var connection = new NpgsqlConnectionStringBuilder(connectionString);
@@ -118,7 +118,7 @@ try
     }
 
     Console.WriteLine("PASS A2-04: 201 Staff, normalized email, salted PBKDF2, no secret response, 400, 409 and concurrent duplicate 409.");
-    if (stage is "login" or "authorization")
+    if (stage is "login" or "authorization" or "accounts")
     {
         using var login = await client.PostAsJsonAsync("/api/auth/login",
             new { email = " STAFF@EXAMPLE.INVALID ", password });
@@ -155,6 +155,85 @@ try
               await wrongPassword.Content.ReadAsStringAsync() == await wrongEmail.Content.ReadAsStringAsync(),
             "Invalid credentials must return the same 401 response.");
         Console.WriteLine("PASS A2-05: signed JWT claims/expiry, safe response and generic 401.");
+        if (stage == "accounts")
+        {
+            using var anonymous = await client.GetAsync("/api/accounts");
+            Check(anonymous.StatusCode == HttpStatusCode.Unauthorized, "Anonymous account list was not 401.");
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokenText);
+            using var staffList = await client.GetAsync("/api/accounts");
+            using var staffUpdate = await client.PutAsJsonAsync($"/api/accounts/{id}", new { fullName = "Wrong" });
+            using var staffDelete = await client.DeleteAsync($"/api/accounts/{id}");
+            Check(staffList.StatusCode == HttpStatusCode.Forbidden &&
+                  staffUpdate.StatusCode == HttpStatusCode.Forbidden &&
+                  staffDelete.StatusCode == HttpStatusCode.Forbidden, "Staff account API was not 403.");
+
+            await using (var db = new TaskManagementDbContext(options))
+            {
+                var firstAdmin = await db.SystemAccounts.SingleAsync(x => x.AccountId == id);
+                firstAdmin.Role = 1;
+                await db.SaveChangesAsync();
+            }
+            client.DefaultRequestHeaders.Authorization = null;
+            using var adminLogin = await client.PostAsJsonAsync("/api/auth/login",
+                new { email = "staff@example.invalid", password });
+            Check(adminLogin.StatusCode == HttpStatusCode.OK, "Admin login failed.");
+            using var adminLoginBody = JsonDocument.Parse(await adminLogin.Content.ReadAsStringAsync());
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Bearer", adminLoginBody.RootElement.GetProperty("token").GetString());
+            using var list = await client.GetAsync("/api/accounts");
+            Check(list.StatusCode == HttpStatusCode.OK, "Admin list failed.");
+            using var listBody = JsonDocument.Parse(await list.Content.ReadAsStringAsync());
+            Check(listBody.RootElement.GetArrayLength() >= 2 &&
+                  !listBody.RootElement[0].TryGetProperty("passwordHash", out _), "Account list exposed hash.");
+            using var detail = await client.GetAsync($"/api/accounts/{id}");
+            Check(detail.StatusCode == HttpStatusCode.OK, "Admin detail failed.");
+            using var missing = await client.GetAsync("/api/accounts/999999");
+            Check(missing.StatusCode == HttpStatusCode.NotFound, "Missing account did not return 404.");
+            using var invalidUpdate = await client.PutAsJsonAsync($"/api/accounts/{id}", new { role = 5 });
+            using var emptyUpdate = await client.PutAsJsonAsync($"/api/accounts/{id}", new { });
+            using var nullUpdate = await client.PutAsJsonAsync($"/api/accounts/{id}", new { fullName = (string?)null });
+            Check(invalidUpdate.StatusCode == HttpStatusCode.BadRequest &&
+                  emptyUpdate.StatusCode == HttpStatusCode.BadRequest &&
+                  nullUpdate.StatusCode == HttpStatusCode.BadRequest, "Invalid account updates were accepted.");
+            using var lastAdminDemote = await client.PutAsJsonAsync($"/api/accounts/{id}", new { role = 0 });
+            using var selfDelete = await client.DeleteAsync($"/api/accounts/{id}");
+            Check(lastAdminDemote.StatusCode == HttpStatusCode.BadRequest &&
+                  selfDelete.StatusCode == HttpStatusCode.BadRequest, "Last/self Admin protection failed.");
+
+            using var newStaff = await client.PostAsJsonAsync("/api/auth/register",
+                new { fullName = "Manage Staff", email = "manage@example.invalid", password });
+            Check(newStaff.StatusCode == HttpStatusCode.Created, "Second Staff registration failed.");
+            using var newStaffBody = JsonDocument.Parse(await newStaff.Content.ReadAsStringAsync());
+            var managedId = newStaffBody.RootElement.GetProperty("accountId").GetInt32();
+            using var updated = await client.PutAsJsonAsync($"/api/accounts/{managedId}",
+                new { fullName = "Managed Staff", role = 1 });
+            Check(updated.StatusCode == HttpStatusCode.OK, "Admin update failed.");
+            using var updatedBody = JsonDocument.Parse(await updated.Content.ReadAsStringAsync());
+            Check(updatedBody.RootElement.GetProperty("fullName").GetString() == "Managed Staff" &&
+                  updatedBody.RootElement.GetProperty("role").GetInt32() == 1 &&
+                  !updatedBody.RootElement.TryGetProperty("passwordHash", out _), "Account update response is wrong.");
+
+            using var createdTask = await client.PostAsJsonAsync("/api/tasks",
+                new { title = "Account ownership lock", projectId = 1, status = 0, priority = 1 });
+            Check(createdTask.StatusCode == HttpStatusCode.Created, "Admin Task creation failed.");
+            using var createdTaskBody = JsonDocument.Parse(await createdTask.Content.ReadAsStringAsync());
+            var taskId = createdTaskBody.RootElement.GetProperty("taskId").GetInt32();
+            using var softDelete = await client.DeleteAsync($"/api/tasks/{taskId}");
+            Check(softDelete.StatusCode == HttpStatusCode.NoContent, "Task soft delete failed.");
+            using var blockOwner = await client.DeleteAsync($"/api/accounts/{id}");
+            Check(blockOwner.StatusCode == HttpStatusCode.BadRequest, "Account with inactive Task could be deleted.");
+
+            using var thirdStaff = await client.PostAsJsonAsync("/api/auth/register",
+                new { fullName = "Delete Me", email = "delete@example.invalid", password });
+            using var thirdStaffBody = JsonDocument.Parse(await thirdStaff.Content.ReadAsStringAsync());
+            var deleteId = thirdStaffBody.RootElement.GetProperty("accountId").GetInt32();
+            using var deleted = await client.DeleteAsync($"/api/accounts/{deleteId}");
+            Check(deleted.StatusCode == HttpStatusCode.NoContent, "Admin delete failed.");
+            using var deletedDetail = await client.GetAsync($"/api/accounts/{deleteId}");
+            Check(deletedDetail.StatusCode == HttpStatusCode.NotFound, "Deleted account still exists.");
+            Console.WriteLine("PASS A2-07: 401/403, Admin list/detail/update/delete, validation/404, last Admin and Task ownership, no hash.");
+        }
         if (stage == "authorization")
         {
             foreach (var resource in new[] { "departments", "projects", "tasks", "tags" })

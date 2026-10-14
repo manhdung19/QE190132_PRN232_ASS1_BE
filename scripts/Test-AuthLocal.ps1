@@ -1,6 +1,6 @@
 # Creates a disposable local PostgreSQL cluster and runs the selected auth stage.
 param(
-    [ValidateSet('register', 'login', 'authorization')][string]$Stage = 'register',
+    [ValidateSet('register', 'login', 'authorization', 'accounts')][string]$Stage = 'register',
     [string]$PostgresBin = 'C:\Program Files\PostgreSQL\18\bin',
     [int]$Port = 55434
 )

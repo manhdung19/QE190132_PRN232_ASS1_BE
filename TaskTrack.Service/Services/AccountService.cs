@@ -3,6 +3,8 @@ using TaskTrack.Repo.Repositories;
 using TaskTrack.Service.Contracts;
 using TaskTrack.Service.Errors;
 using TaskTrack.Service.Mapping;
+using Microsoft.EntityFrameworkCore;
+using TaskTrack.Repo.Data;
 
 namespace TaskTrack.Service.Services;
 
@@ -16,7 +18,8 @@ public interface IAccountService
     Task DeleteAsync(int id, int actingAccountId, CancellationToken cancellationToken = default);
 }
 
-public sealed class AccountService(IAccountRepository repository, IUnitOfWork unitOfWork) : IAccountService
+public sealed class AccountService(IAccountRepository repository, IUnitOfWork unitOfWork,
+    TaskManagementDbContext db) : IAccountService
 {
     public async Task<IReadOnlyList<AccountResponse>> GetAllAsync(CancellationToken cancellationToken = default) =>
         (await repository.GetAllAsync(cancellationToken)).Select(x => x.ToResponse()).ToArray();
@@ -58,8 +61,6 @@ public sealed class AccountService(IAccountRepository repository, IUnitOfWork un
     public async Task<AccountResponse> UpdateAsync(
         int id, string? fullName, short? role, CancellationToken cancellationToken = default)
     {
-        // A2-07 must lock the Admin set and this mutation in one DB transaction
-        // before exposing role updates through an HTTP endpoint.
         if (fullName is null && role is null)
             throw ServiceException.Invalid("operation", "Supply a name or role.");
         if (fullName is not null && string.IsNullOrWhiteSpace(fullName))
@@ -67,6 +68,8 @@ public sealed class AccountService(IAccountRepository repository, IUnitOfWork un
         if (role is not null && role is not (0 or 1))
             throw ServiceException.Invalid("role", "Role must be Staff (0) or Admin (1).");
 
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.Database.ExecuteSqlRawAsync("LOCK TABLE \"SystemAccount\" IN SHARE ROW EXCLUSIVE MODE", cancellationToken);
         var account = await repository.FindAsync(id, cancellationToken)
             ?? throw new ServiceException(ServiceErrorKind.NotFound);
         if (account.Role == 1 && role == 0 && await repository.CountAdminsAsync(cancellationToken) <= 1)
@@ -75,12 +78,14 @@ public sealed class AccountService(IAccountRepository repository, IUnitOfWork un
         if (fullName is not null) account.FullName = fullName.Trim();
         if (role.HasValue) account.Role = role.Value;
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return account.ToResponse();
     }
 
     public async Task DeleteAsync(int id, int actingAccountId, CancellationToken cancellationToken = default)
     {
-        // A2-07 must make the last-Admin check and delete atomic before exposing it.
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.Database.ExecuteSqlRawAsync("LOCK TABLE \"SystemAccount\" IN SHARE ROW EXCLUSIVE MODE", cancellationToken);
         var account = await repository.FindAsync(id, cancellationToken)
             ?? throw new ServiceException(ServiceErrorKind.NotFound);
         if (id == actingAccountId)
@@ -92,5 +97,6 @@ public sealed class AccountService(IAccountRepository repository, IUnitOfWork un
 
         repository.Remove(account);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 }
