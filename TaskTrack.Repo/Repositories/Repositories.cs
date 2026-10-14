@@ -186,6 +186,16 @@ public sealed class TaskRepository(TaskManagementDbContext context) : Repository
 
 public sealed class AccountRepository(TaskManagementDbContext context) : Repository<SystemAccount>(context), IAccountRepository
 {
+    public async Task<T> WithAdminLockAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await Context.Database.BeginTransactionAsync(cancellationToken);
+        await Context.Database.ExecuteSqlRawAsync(
+            "LOCK TABLE \"SystemAccount\" IN SHARE ROW EXCLUSIVE MODE", cancellationToken);
+        var result = await action();
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
     public Task<SystemAccount?> FindByEmailAsync(string email, CancellationToken cancellationToken = default) =>
         Context.SystemAccounts.AsNoTracking().SingleOrDefaultAsync(x => x.Email == email, cancellationToken);
 

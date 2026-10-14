@@ -3,8 +3,6 @@ using TaskTrack.Repo.Repositories;
 using TaskTrack.Service.Contracts;
 using TaskTrack.Service.Errors;
 using TaskTrack.Service.Mapping;
-using Microsoft.EntityFrameworkCore;
-using TaskTrack.Repo.Data;
 
 namespace TaskTrack.Service.Services;
 
@@ -18,8 +16,7 @@ public interface IAccountService
     Task DeleteAsync(int id, int actingAccountId, CancellationToken cancellationToken = default);
 }
 
-public sealed class AccountService(IAccountRepository repository, IUnitOfWork unitOfWork,
-    TaskManagementDbContext db) : IAccountService
+public sealed class AccountService(IAccountRepository repository, IUnitOfWork unitOfWork) : IAccountService
 {
     public async Task<IReadOnlyList<AccountResponse>> GetAllAsync(CancellationToken cancellationToken = default) =>
         (await repository.GetAllAsync(cancellationToken)).Select(x => x.ToResponse()).ToArray();
@@ -68,35 +65,36 @@ public sealed class AccountService(IAccountRepository repository, IUnitOfWork un
         if (role is not null && role is not (0 or 1))
             throw ServiceException.Invalid("role", "Role must be Staff (0) or Admin (1).");
 
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        await db.Database.ExecuteSqlRawAsync("LOCK TABLE \"SystemAccount\" IN SHARE ROW EXCLUSIVE MODE", cancellationToken);
-        var account = await repository.FindAsync(id, cancellationToken)
-            ?? throw new ServiceException(ServiceErrorKind.NotFound);
-        if (account.Role == 1 && role == 0 && await repository.CountAdminsAsync(cancellationToken) <= 1)
-            throw ServiceException.Blocked("The last Admin cannot be demoted.");
+        return await repository.WithAdminLockAsync(async () =>
+        {
+            var account = await repository.FindAsync(id, cancellationToken)
+                ?? throw new ServiceException(ServiceErrorKind.NotFound);
+            if (account.Role == 1 && role == 0 && await repository.CountAdminsAsync(cancellationToken) <= 1)
+                throw ServiceException.Blocked("The last Admin cannot be demoted.");
 
-        if (fullName is not null) account.FullName = fullName.Trim();
-        if (role.HasValue) account.Role = role.Value;
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return account.ToResponse();
+            if (fullName is not null) account.FullName = fullName.Trim();
+            if (role.HasValue) account.Role = role.Value;
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            return account.ToResponse();
+        }, cancellationToken);
     }
 
     public async Task DeleteAsync(int id, int actingAccountId, CancellationToken cancellationToken = default)
     {
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        await db.Database.ExecuteSqlRawAsync("LOCK TABLE \"SystemAccount\" IN SHARE ROW EXCLUSIVE MODE", cancellationToken);
-        var account = await repository.FindAsync(id, cancellationToken)
-            ?? throw new ServiceException(ServiceErrorKind.NotFound);
-        if (id == actingAccountId)
-            throw ServiceException.Blocked("The current Admin cannot delete their own account.");
-        if (await repository.HasCreatedTasksAsync(id, cancellationToken))
-            throw ServiceException.Blocked("Cannot delete an account that created tasks.");
-        if (account.Role == 1 && await repository.CountAdminsAsync(cancellationToken) <= 1)
-            throw ServiceException.Blocked("The last Admin cannot be deleted.");
+        await repository.WithAdminLockAsync(async () =>
+        {
+            var account = await repository.FindAsync(id, cancellationToken)
+                ?? throw new ServiceException(ServiceErrorKind.NotFound);
+            if (id == actingAccountId)
+                throw ServiceException.Blocked("The current Admin cannot delete their own account.");
+            if (await repository.HasCreatedTasksAsync(id, cancellationToken))
+                throw ServiceException.Blocked("Cannot delete an account that created tasks.");
+            if (account.Role == 1 && await repository.CountAdminsAsync(cancellationToken) <= 1)
+                throw ServiceException.Blocked("The last Admin cannot be deleted.");
 
-        repository.Remove(account);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            repository.Remove(account);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            return true;
+        }, cancellationToken);
     }
 }

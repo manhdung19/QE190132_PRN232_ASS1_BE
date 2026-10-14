@@ -51,6 +51,7 @@ public interface ITaskRepository : IRepository<TaskEntity>
 }
 public interface IAccountRepository : IRepository<SystemAccount>
 {
+    Task<T> WithAdminLockAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken = default);
     Task<SystemAccount?> FindByEmailAsync(string email, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<SystemAccount>> GetAllAsync(CancellationToken cancellationToken = default);
     Task<bool> HasCreatedTasksAsync(int accountId, CancellationToken cancellationToken = default);
