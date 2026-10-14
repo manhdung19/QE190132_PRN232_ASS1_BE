@@ -1,4 +1,4 @@
-# QE190132_PRN232_Ass1_BE — TaskTrack Management Backend API
+# QE190132_PRN232_Ass1_BE — TaskTrack Management Backend API (Assignment 2)
 
 > **Môn học:** PRN232 — Kỹ thuật phát triển ứng dụng phân tán  
 > **Sinh viên:** QE190132 — Lớp: PRN232  
@@ -29,7 +29,7 @@ Dự án tuân thủ nghiêm ngặt mô hình 3 lớp phân tầng:
   - **Services** chỉ phụ thuộc vào `IUnitOfWork` và các `Repository` interfaces, thực hiện validation nghiệp vụ, kiểm tra ràng buộc logic, xử lý lỗi theo kết quả `Result<T>` và điều phối transaction; không chứa mã truy cập DbContext trực tiếp.
   - **Repositories & DbContext** là nơi duy nhất thực thi truy vấn LINQ/SQL đến PostgreSQL.
 - **Tính nguyên vẹn của Schema:**
-  - Ánh xạ Database-First hoàn toàn từ `TaskManagementDB_Postgres.sql`.
+  - Ánh xạ Database-First từ `TaskManagementDB_Postgres.sql` và script nâng cấp `Assignment2_Upgrade.sql`.
   - Tuyệt đối không thêm/chạy EF Core Migration, không sử dụng `EnsureCreated()`.
   - Mappings entity và kiểu dữ liệu (DateOnly cho DATE, DateTime cho TIMESTAMP, short cho SMALLINT) được bảo tồn nguyên vẹn.
 
@@ -48,6 +48,10 @@ Backend hỗ trợ định dạng URL kết nối của PostgreSQL (`postgres://
 2. **Cách 2: Sử dụng file cấu hình (Không commit secret vào git):**
    Cung cấp cấu hình `ConnectionStrings:TaskTrack` trong `appsettings.Development.json` (được gitignore loại trừ).
 
+Trước khi chạy bản Assignment 2, áp dụng `database/Assignment2_Upgrade.sql` **một lần** trên DB Assignment 1. Đừng chạy lại script import cũ vì nó xóa các bảng.
+
+Đặt `JWT_SECRET` dài tối thiểu 32 byte UTF-8 qua biến môi trường hoặc cấu hình development riêng, không commit giá trị thật. API sẽ từ chối khởi động nếu thiếu secret.
+
 ### 2.2 Chạy ứng dụng
 Mở terminal trong thư mục `Backend`:
 ```powershell
@@ -64,9 +68,20 @@ dotnet run --project TaskTrack.API --launch-profile http
 ## 3. Cấu hình Swagger, CORS và Hợp đồng lỗi
 
 ### 3.1 Swagger & OpenAPI
-- Tự động sinh tài liệu chuẩn OpenAPI v1 cho toàn bộ 24 endpoint công khai.
+- Tự động sinh OpenAPI v1 với Bearer scheme. GET resource và register/login công khai; ghi Department/Project/Task/Tag cần Staff hoặc Admin; Account API chỉ Admin. Nhấn **Authorize** trong Swagger rồi dán JWT nhận từ `/api/auth/login`.
 - Cung cấp mô tả chi tiết về các giá trị Enum, hợp đồng lỗi RFC 7807 ProblemDetails và các quy tắc nghiệp vụ quan trọng.
 - Được cấu hình bật trong môi trường Development và có cờ cấu hình `Swagger:EnableInProduction: true` cho mục đích kiểm tra và chấm điểm trên Render.
+
+### 3.1.1 Tạo Admin đầu tiên
+
+Sau khi nâng cấp DB, chạy công cụ dưới đây trong terminal tương tác. Công cụ hỏi mật khẩu ẩn, dùng cùng PBKDF2 như API, chuẩn hóa email và INSERT Admin trực tiếp vào DB. Mật khẩu không đi qua tham số dòng lệnh hoặc Git. Email đã tồn tại sẽ bị từ chối; không có endpoint đăng ký Admin.
+
+```powershell
+$env:DATABASE_URL = '<PostgreSQL URL từ môi trường bảo mật>'
+dotnet run --project tools/TaskTrack.AdminSeed -- 'Admin Name' 'admin@example.com'
+```
+
+Trong môi trường tự động hóa an toàn, tùy chọn `--password-stdin` nhận một dòng mật khẩu từ standard input. Không ghi mật khẩu vào script, lịch sử shell hay log. Sau khi seed, đăng nhập tại `/api/auth/login` và kiểm tra role Admin.
 
 ### 3.2 Cấu hình CORS
 - Cung cấp Policy `TaskTrackCorsPolicy` cho phép frontend gọi API thông qua cấu hình `Cors:AllowedOrigins`:

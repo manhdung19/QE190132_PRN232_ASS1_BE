@@ -1,6 +1,6 @@
 # Creates a disposable local PostgreSQL cluster and runs the selected auth stage.
 param(
-    [ValidateSet('register', 'login', 'authorization', 'accounts')][string]$Stage = 'register',
+    [ValidateSet('register', 'login', 'authorization', 'accounts', 'swagger')][string]$Stage = 'register',
     [string]$PostgresBin = 'C:\Program Files\PostgreSQL\18\bin',
     [int]$Port = 55434
 )
@@ -27,6 +27,10 @@ try {
     $env:A2_TEST_CONNECTION = "Host=127.0.0.1;Port=$Port;Database=tasktrack_a2_test;Username=postgres;Pooling=false"
     & dotnet build 'TaskTrack.API/TaskTrack.API.csproj' -m:1 -v quiet -p:UseSharedCompilation=false -p:NuGetAudit=false --ignore-failed-sources
     if ($LASTEXITCODE -ne 0) { throw 'API build failed' }
+    if ($Stage -eq 'swagger') {
+        & dotnet build 'tools/TaskTrack.AdminSeed/TaskTrack.AdminSeed.csproj' -m:1 -v quiet -p:UseSharedCompilation=false -p:NuGetAudit=false --ignore-failed-sources
+        if ($LASTEXITCODE -ne 0) { throw 'AdminSeed build failed' }
+    }
     & dotnet run --project 'tools/TaskTrack.AuthCheck/TaskTrack.AuthCheck.csproj' --no-build -- $Stage
     if ($LASTEXITCODE -ne 0) { throw "AuthCheck stage $Stage failed" }
 }

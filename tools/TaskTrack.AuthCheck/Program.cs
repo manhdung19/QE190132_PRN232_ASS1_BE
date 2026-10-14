@@ -9,7 +9,7 @@ using TaskTrack.Repo.Data;
 using TaskTrack.Service.Services;
 
 var stage = args.SingleOrDefault() ?? "register";
-if (stage is not ("register" or "login" or "authorization" or "accounts")) throw new ArgumentException("Unknown auth check stage.");
+if (stage is not ("register" or "login" or "authorization" or "accounts" or "swagger")) throw new ArgumentException("Unknown auth check stage.");
 var connectionString = Environment.GetEnvironmentVariable("A2_TEST_CONNECTION")
     ?? throw new InvalidOperationException("Set A2_TEST_CONNECTION for a disposable local PostgreSQL database.");
 var connection = new NpgsqlConnectionStringBuilder(connectionString);
@@ -118,6 +118,48 @@ try
     }
 
     Console.WriteLine("PASS A2-04: 201 Staff, normalized email, salted PBKDF2, no secret response, 400, 409 and concurrent duplicate 409.");
+    if (stage == "swagger")
+    {
+        using var specResponse = await client.GetAsync("/swagger/v1/swagger.json");
+        Check(specResponse.StatusCode == HttpStatusCode.OK, "Swagger JSON is unavailable.");
+        using var spec = JsonDocument.Parse(await specResponse.Content.ReadAsStringAsync());
+        var schemes = spec.RootElement.GetProperty("components").GetProperty("securitySchemes");
+        Check(schemes.GetProperty("Bearer").GetProperty("scheme").GetString() == "bearer",
+            "Swagger Bearer scheme is missing.");
+        var paths = spec.RootElement.GetProperty("paths");
+        Check(paths.GetProperty("/api/tasks").GetProperty("post").GetProperty("security")[0]
+                  .TryGetProperty("Bearer", out _) &&
+              !paths.GetProperty("/api/tasks").GetProperty("get").TryGetProperty("security", out _) &&
+              !paths.GetProperty("/api/auth/login").GetProperty("post").TryGetProperty("security", out _) &&
+              paths.GetProperty("/api/accounts").GetProperty("get").GetProperty("security")[0]
+                  .TryGetProperty("Bearer", out _), "Swagger route security is wrong.");
+
+        var seedDll = Path.GetFullPath("tools/TaskTrack.AdminSeed/bin/Debug/net8.0/TaskTrack.AdminSeed.dll");
+        var seedStart = new ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false, RedirectStandardInput = true,
+            RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        seedStart.ArgumentList.Add(seedDll);
+        seedStart.ArgumentList.Add("Test Admin");
+        seedStart.ArgumentList.Add(" ADMIN@EXAMPLE.INVALID ");
+        seedStart.ArgumentList.Add("--password-stdin");
+        seedStart.Environment.Remove("DATABASE_URL");
+        seedStart.Environment["ConnectionStrings__TaskTrack"] = connection.ConnectionString;
+        using var seed = Process.Start(seedStart) ?? throw new InvalidOperationException("AdminSeed did not start.");
+        await seed.StandardInput.WriteLineAsync("LocalAdminPass123!");
+        seed.StandardInput.Close();
+        var seedOutput = await seed.StandardOutput.ReadToEndAsync();
+        var seedError = await seed.StandardError.ReadToEndAsync();
+        await seed.WaitForExitAsync();
+        Check(seed.ExitCode == 0 && !seedOutput.Contains("LocalAdminPass123!") &&
+              !seedError.Contains("LocalAdminPass123!"), "AdminSeed failed or leaked password.");
+        await using var seedDb = new TaskManagementDbContext(options);
+        var seeded = await seedDb.SystemAccounts.AsNoTracking().SingleAsync(x => x.Email == "admin@example.invalid");
+        Check(seeded.Role == 1 && PasswordHasher.Verify("LocalAdminPass123!", seeded.PasswordHash),
+            "AdminSeed did not insert a valid Admin hash.");
+        Console.WriteLine("PASS A2-08: Swagger Bearer security per route; AdminSeed inserted hashed Admin without secret output.");
+    }
     if (stage is "login" or "authorization" or "accounts")
     {
         using var login = await client.PostAsJsonAsync("/api/auth/login",

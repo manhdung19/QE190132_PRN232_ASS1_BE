@@ -93,12 +93,12 @@ builder.Services.AddSwaggerGen(c =>
         Title = "TaskTrack Management API",
         Version = "v1",
         Description = """
-            ### PRN232 Assignment 1 — Task & Team Management API (QE190132)
+            ### PRN232 Assignment 2 — Task & Team Management API (QE190132)
             
             API for managing Departments, Projects, Tasks, and Tags.
             
             #### Business Rules & Specifications:
-            - **Access**: GET endpoints are public. POST/PUT/DELETE require a valid Bearer token.
+            - **Access**: Resource GET endpoints and register/login are public. Resource POST/PUT/DELETE require a Staff or Admin Bearer token. Account API is Admin only.
             - **Enums**:
               - **ProjectStatus**: `0` = NotStarted, `1` = InProgress, `2` = Completed, `3` = OnHold.
               - **TaskStatus**: `0` = ToDo, `1` = InProgress, `2` = Done, `3` = Cancelled.
@@ -117,6 +117,16 @@ builder.Services.AddSwaggerGen(c =>
               - 500 Internal Error: Safe generic error message; never leaks stack traces or SQL details.
             """
     });
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Paste the JWT returned by POST /api/auth/login."
+    });
+    c.OperationFilter<BearerSecurityOperationFilter>();
 });
 
 var app = builder.Build();
