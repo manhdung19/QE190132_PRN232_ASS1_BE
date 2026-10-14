@@ -184,3 +184,20 @@ public sealed class TaskRepository(TaskManagementDbContext context) : Repository
     }
 }
 
+public sealed class AccountRepository(TaskManagementDbContext context) : Repository<SystemAccount>(context), IAccountRepository
+{
+    public Task<SystemAccount?> FindByEmailAsync(string email, CancellationToken cancellationToken = default) =>
+        Context.SystemAccounts.AsNoTracking().SingleOrDefaultAsync(x => x.Email == email, cancellationToken);
+
+    public async Task<IReadOnlyList<SystemAccount>> GetAllAsync(CancellationToken cancellationToken = default) =>
+        await Context.SystemAccounts.AsNoTracking().OrderBy(x => x.AccountId).ToListAsync(cancellationToken);
+
+    public Task<bool> HasCreatedTasksAsync(int accountId, CancellationToken cancellationToken = default) =>
+        Context.Tasks.AnyAsync(x => x.CreatedById == accountId, cancellationToken);
+
+    public Task<int> CountAdminsAsync(CancellationToken cancellationToken = default) =>
+        Context.SystemAccounts.CountAsync(x => x.Role == 1, cancellationToken);
+
+    public void Remove(SystemAccount entity) => Context.SystemAccounts.Remove(entity);
+}
+

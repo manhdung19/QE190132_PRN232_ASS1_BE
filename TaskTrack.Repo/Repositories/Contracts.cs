@@ -49,6 +49,14 @@ public interface ITaskRepository : IRepository<TaskEntity>
     System.Threading.Tasks.Task LoadTagsAsync(TaskEntity entity, CancellationToken cancellationToken = default);
     // No Remove: tasks may only be soft deleted through tracked IsActive changes.
 }
+public interface IAccountRepository : IRepository<SystemAccount>
+{
+    Task<SystemAccount?> FindByEmailAsync(string email, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<SystemAccount>> GetAllAsync(CancellationToken cancellationToken = default);
+    Task<bool> HasCreatedTasksAsync(int accountId, CancellationToken cancellationToken = default);
+    Task<int> CountAdminsAsync(CancellationToken cancellationToken = default);
+    void Remove(SystemAccount entity);
+}
 public interface IUnitOfWork
 {
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);

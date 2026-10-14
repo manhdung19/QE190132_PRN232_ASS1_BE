@@ -37,6 +37,11 @@ public static class DtoMapping
     };
     public static TagListItem ToListItem(this Tag x) => new() { TagId = x.TagId, TagName = x.TagName, Color = x.Color };
     public static TagDetail ToDetail(this Tag x) => new() { TagId = x.TagId, TagName = x.TagName, Color = x.Color };
+    public static AccountResponse ToResponse(this SystemAccount x) => new()
+    {
+        AccountId = x.AccountId, FullName = x.FullName, Email = x.Email,
+        Role = x.Role, CreatedDate = x.CreatedDate
+    };
     public static TaskListItem ToListItem(this TaskEntity x) => x.ToDetail();
     public static TaskDetail ToDetail(this TaskEntity x) => new()
     {

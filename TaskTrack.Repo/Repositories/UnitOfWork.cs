@@ -23,7 +23,7 @@ public sealed class UnitOfWork(TaskManagementDbContext context) : IUnitOfWork
             return await context.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException pg &&
-            pg.SqlState is PostgresErrorCodes.ForeignKeyViolation or PostgresErrorCodes.UniqueViolation)
+            pg.SqlState is PostgresErrorCodes.ForeignKeyViolation or PostgresErrorCodes.UniqueViolation or "23001")
         {
             var error = (PostgresException)ex.InnerException!;
             // A delete FK conflict belongs to the operation, not a payload FK field.
@@ -34,6 +34,8 @@ public sealed class UnitOfWork(TaskManagementDbContext context) : IUnitOfWork
                 "FK_Task_Project" => "projectId",
                 "FK_TaskTag_Tag" => "tagIds",
                 "Tag_TagName_key" => "tagName",
+                "UQ_SystemAccount_Email" => "email",
+                "FK_Task_SystemAccount_CreatedBy" => "createdById",
                 _ => "operation"
             };
             throw new PersistenceConflictException(

@@ -31,4 +31,4 @@ Script được thiết kế **chạy một lần**. Nếu chạy lại, nó d�
 
 Nếu transaction nâng cấp thất bại, PostgreSQL tự rollback; **không chạy script phục hồi**. Nếu đã commit nhưng chưa tạo account hoặc gán người tạo cho Task, có thể phục hồi từ snapshot, hoặc sau khi xác nhận dữ liệu mới thật sự rỗng, mở transaction riêng để xóa index/FK/cột `CreatedByID` rồi `SystemAccount`. Việc đó sẽ xóa dữ liệu Assignment 2; không thực hiện khi đã có account/task ownership. Khi production đã có dữ liệu mới, dùng backup và kế hoạch khôi phục được người quản trị xác nhận thay vì chạy lệnh DROP thủ công.
 
-Mapping EF Core database-first và nghiệp vụ account được thêm ở Task A2-03 trở đi; A2-02 chỉ nâng schema.
+Mapping EF Core database-first và nghiệp vụ account được thêm ở Task A2-03 trở đi. **Áp dụng script nâng cấp lên database đích trước khi triển khai backend có mapping A2-03**: model Task mới đọc cột `CreatedByID`, nên backend mới sẽ lỗi truy vấn nếu DB vẫn ở schema Assignment 1. Trình tự triển khai production thuộc Task A2-17.

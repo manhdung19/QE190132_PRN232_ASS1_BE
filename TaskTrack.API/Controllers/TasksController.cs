@@ -39,7 +39,16 @@ public sealed class TasksController(ITaskService service) : ControllerBase
     public async Task<ActionResult<TaskDetail>> Create(
         [FromBody] TaskCreateRequest request, CancellationToken cancellationToken)
     {
-        var created = await service.CreateAsync(request, cancellationToken);
+        // Authentication is introduced in A2-05/06. Once enabled, only the validated
+        // accountId claim may supply ownership; client JSON has no createdById field.
+        int? creatorAccountId = null;
+        if (User.Identity?.IsAuthenticated == true)
+        {
+            if (!int.TryParse(User.FindFirst("accountId")?.Value, out var accountId) || accountId <= 0)
+                return Unauthorized();
+            creatorAccountId = accountId;
+        }
+        var created = await service.CreateAsync(request, creatorAccountId, cancellationToken);
         return CreatedAtAction(nameof(GetById), new { id = created.TaskId }, created);
     }
 

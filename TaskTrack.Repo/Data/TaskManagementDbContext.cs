@@ -21,6 +21,8 @@ public partial class TaskManagementDbContext : DbContext
 
     public virtual DbSet<Task> Tasks { get; set; }
 
+    public virtual DbSet<SystemAccount> SystemAccounts { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Department>(entity =>
@@ -76,6 +78,7 @@ public partial class TaskManagementDbContext : DbContext
             entity.ToTable("Task");
 
             entity.Property(e => e.TaskId).HasColumnName("TaskID");
+            entity.Property(e => e.CreatedById).HasColumnName("CreatedByID");
             entity.Property(e => e.CreatedDate)
                 .HasDefaultValueSql("CURRENT_TIMESTAMP")
                 .HasColumnType("timestamp without time zone");
@@ -90,6 +93,11 @@ public partial class TaskManagementDbContext : DbContext
                 .HasForeignKey(d => d.ProjectId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_Task_Project");
+
+            entity.HasOne(d => d.CreatedBy).WithMany(p => p.CreatedTasks)
+                .HasForeignKey(d => d.CreatedById)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_Task_SystemAccount_CreatedBy");
 
             entity.HasMany(d => d.Tags).WithMany(p => p.Tasks)
                 .UsingEntity<Dictionary<string, object>>(
@@ -109,6 +117,21 @@ public partial class TaskManagementDbContext : DbContext
                         j.IndexerProperty<int>("TaskId").HasColumnName("TaskID");
                         j.IndexerProperty<int>("TagId").HasColumnName("TagID");
                     });
+        });
+
+        modelBuilder.Entity<SystemAccount>(entity =>
+        {
+            entity.HasKey(e => e.AccountId).HasName("SystemAccount_pkey");
+            entity.ToTable("SystemAccount");
+            entity.HasIndex(e => e.Email, "UQ_SystemAccount_Email").IsUnique();
+            entity.Property(e => e.AccountId).HasColumnName("AccountID").ValueGeneratedOnAdd();
+            entity.Property(e => e.FullName).HasMaxLength(150);
+            entity.Property(e => e.Email).HasMaxLength(320);
+            entity.Property(e => e.PasswordHash).HasColumnType("text");
+            entity.Property(e => e.Role).HasDefaultValue((short)0);
+            entity.Property(e => e.CreatedDate)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnType("timestamp with time zone");
         });
 
         OnModelCreatingPartial(modelBuilder);

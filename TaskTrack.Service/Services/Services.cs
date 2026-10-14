@@ -48,7 +48,7 @@ public interface ITaskService
     Task<TaskDetail> GetByIdAsync(int id, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<TaskListItem>> GetByProjectAsync(int projectId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<TaskListItem>> SearchAsync(TaskSearchRequest request, CancellationToken cancellationToken = default);
-    Task<TaskDetail> CreateAsync(TaskCreateRequest request, CancellationToken cancellationToken = default);
+    Task<TaskDetail> CreateAsync(TaskCreateRequest request, int? creatorAccountId, CancellationToken cancellationToken = default);
     Task<TaskDetail> UpdateAsync(int id, TaskUpdateRequest request, CancellationToken cancellationToken = default);
     Task DeleteAsync(int id, CancellationToken cancellationToken = default);
     void Validate(TaskWriteRequest request);
@@ -280,6 +280,7 @@ public sealed class TaskService(
     ITaskRepository repository,
     IProjectRepository projectRepository,
     ITagRepository tagRepository,
+    IAccountRepository accountRepository,
     IUnitOfWork unitOfWork) : ITaskService
 {
     public async Task<IReadOnlyList<TaskListItem>> GetAllAsync(CancellationToken cancellationToken = default) =>
@@ -308,9 +309,15 @@ public sealed class TaskService(
             .Select(x => x.ToListItem()).ToArray();
     }
 
-    public async Task<TaskDetail> CreateAsync(TaskCreateRequest request, CancellationToken cancellationToken = default)
+    public async Task<TaskDetail> CreateAsync(
+        TaskCreateRequest request, int? creatorAccountId, CancellationToken cancellationToken = default)
     {
         Validate(request);
+
+        if (creatorAccountId.HasValue &&
+            (creatorAccountId.Value <= 0 ||
+             !await accountRepository.ExistsAsync(x => x.AccountId == creatorAccountId.Value, cancellationToken)))
+            throw ServiceException.Invalid("operation", "The authenticated account no longer exists.");
 
         if (!await projectRepository.ExistsAsync(x => x.ProjectId == request.ProjectId && x.IsActive, cancellationToken))
             throw ServiceException.Invalid("projectId", "The specified project does not exist or is inactive.");
@@ -332,6 +339,7 @@ public sealed class TaskService(
             Priority = (short)request.Priority,
             DueDate = request.DueDate,
             ProjectId = request.ProjectId,
+            CreatedById = creatorAccountId,
             IsActive = true,
             CreatedDate = DatabaseTime.UtcNow(),
             ModifiedDate = null
