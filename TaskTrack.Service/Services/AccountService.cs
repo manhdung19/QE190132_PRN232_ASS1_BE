@@ -40,7 +40,7 @@ public sealed class AccountService(IAccountRepository repository, IUnitOfWork un
 
         var normalizedEmail = email.Trim().ToLowerInvariant();
         if (await repository.FindByEmailAsync(normalizedEmail, cancellationToken) is not null)
-            throw ServiceException.Invalid("email", "Email already exists.");
+            throw ServiceException.Conflict("email", "Email already exists.");
 
         var account = new SystemAccount
         {

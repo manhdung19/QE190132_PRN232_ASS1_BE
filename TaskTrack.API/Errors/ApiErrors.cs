@@ -51,7 +51,11 @@ public sealed class ApiExceptionMiddleware(RequestDelegate next, ILogger<ApiExce
             var problem = exception switch
             {
                 ServiceException { Kind: ServiceErrorKind.NotFound } => ApiErrors.Create(context, 404, "Resource not found"),
+                ServiceException { Kind: ServiceErrorKind.Conflict } conflict => ApiErrors.Create(context, 409, "Conflict", conflict.Errors),
                 ServiceException business => ApiErrors.Create(context, 400, "Validation failed", business.Errors),
+                PersistenceConflictException { Kind: PersistenceConflictKind.Unique, Field: "email" } =>
+                    ApiErrors.Create(context, 409, "Conflict",
+                        new Dictionary<string, string[]> { ["email"] = ["The email already exists."] }),
                 PersistenceConflictException conflict => ApiErrors.Create(context, 400, "Validation failed",
                     new Dictionary<string, string[]> { [conflict.Field] = [conflict.Kind == PersistenceConflictKind.Unique
                         ? "The value already exists." : "The operation conflicts with related data."] }),

@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace TaskTrack.Service.Errors;
 
-public enum ServiceErrorKind { NotFound, Validation, Blocked }
+public enum ServiceErrorKind { NotFound, Validation, Blocked, Conflict }
 
 public sealed class ServiceException(ServiceErrorKind kind, IDictionary<string, string[]>? errors = null)
     : Exception(kind == ServiceErrorKind.NotFound ? "Resource not found." : "The operation is invalid.")
@@ -14,6 +14,8 @@ public sealed class ServiceException(ServiceErrorKind kind, IDictionary<string, 
         new(ServiceErrorKind.Validation, new Dictionary<string, string[]> { [field] = [message] });
     public static ServiceException Blocked(string message) =>
         new(ServiceErrorKind.Blocked, new Dictionary<string, string[]> { ["operation"] = [message] });
+    public static ServiceException Conflict(string field, string message) =>
+        new(ServiceErrorKind.Conflict, new Dictionary<string, string[]> { [field] = [message] });
 }
 
 public static class RequestValidation
