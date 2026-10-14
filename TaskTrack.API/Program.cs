@@ -6,6 +6,7 @@ using TaskTrack.Service;
 using TaskTrack.API.Errors;
 using Microsoft.AspNetCore.Mvc.ModelBinding.Metadata;
 using Microsoft.OpenApi.Models;
+using TaskTrack.API.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 var databaseUrl = builder.Configuration["DATABASE_URL"];
@@ -25,6 +26,7 @@ builder.Services.AddDbContext<TaskManagementDbContext>(options =>
 
 builder.Services.AddTaskTrackRepositories();
 builder.Services.AddTaskTrackServices();
+builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddControllers(options =>
     options.ModelMetadataDetailsProviders.Add(new SystemTextJsonValidationMetadataProvider()))
     .ConfigureApiBehaviorOptions(options => options.InvalidModelStateResponseFactory = ApiErrors.InvalidModelState);

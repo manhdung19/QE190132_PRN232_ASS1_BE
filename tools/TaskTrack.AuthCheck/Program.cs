@@ -9,7 +9,7 @@ using TaskTrack.Repo.Data;
 using TaskTrack.Service.Services;
 
 var stage = args.SingleOrDefault() ?? "register";
-if (stage != "register") throw new ArgumentException("Only the register stage is implemented so far.");
+if (stage is not ("register" or "login")) throw new ArgumentException("Unknown auth check stage.");
 var connectionString = Environment.GetEnvironmentVariable("A2_TEST_CONNECTION")
     ?? throw new InvalidOperationException("Set A2_TEST_CONNECTION for a disposable local PostgreSQL database.");
 var connection = new NpgsqlConnectionStringBuilder(connectionString);
@@ -37,6 +37,7 @@ start.Environment["ConnectionStrings__TaskTrack"] = connection.ConnectionString;
 start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
 start.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
 start.Environment["Logging__LogLevel__Default"] = "None";
+start.Environment["JWT_SECRET"] = "LocalAuthCheckSecretOnly_12345678901234567890";
 
 using var api = Process.Start(start) ?? throw new InvalidOperationException("API process did not start.");
 api.OutputDataReceived += (_, _) => { };
@@ -117,6 +118,44 @@ try
     }
 
     Console.WriteLine("PASS A2-04: 201 Staff, normalized email, salted PBKDF2, no secret response, 400, 409 and concurrent duplicate 409.");
+    if (stage == "login")
+    {
+        using var login = await client.PostAsJsonAsync("/api/auth/login",
+            new { email = " STAFF@EXAMPLE.INVALID ", password });
+        Check(login.StatusCode == HttpStatusCode.OK, $"Valid login did not return 200: {(int)login.StatusCode} {await login.Content.ReadAsStringAsync()}");
+        using var loginBody = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
+        var root = loginBody.RootElement;
+        Check(root.GetProperty("tokenType").GetString() == "Bearer", "Token type is wrong.");
+        Check(root.GetProperty("account").GetProperty("accountId").GetInt32() == id,
+            "Login account is wrong.");
+        Check(!root.GetProperty("account").TryGetProperty("passwordHash", out _),
+            "Login exposed the password hash.");
+        var jwt = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler { MapInboundClaims = false };
+        var tokenText = root.GetProperty("token").GetString()!;
+        var principal = jwt.ValidateToken(tokenText, new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+        {
+            ValidateIssuer = false, ValidateAudience = false, ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(
+                System.Text.Encoding.UTF8.GetBytes("LocalAuthCheckSecretOnly_12345678901234567890")),
+            ValidateLifetime = true, ClockSkew = TimeSpan.Zero
+        }, out _);
+        Check(principal.FindFirst("accountId")?.Value == id.ToString() &&
+              principal.FindFirst("email")?.Value == "staff@example.invalid" &&
+              principal.FindFirst("role")?.Value == "Staff" &&
+              principal.FindFirst("roleId")?.Value == "0", "JWT claims are wrong.");
+        var expires = root.GetProperty("expiresAt").GetDateTime();
+        Check(expires > DateTime.UtcNow.AddHours(23) && expires < DateTime.UtcNow.AddHours(25),
+            "JWT expiry is not 24 hours.");
+        using var wrongPassword = await client.PostAsJsonAsync("/api/auth/login",
+            new { email = "staff@example.invalid", password = "WrongPass123!" });
+        using var wrongEmail = await client.PostAsJsonAsync("/api/auth/login",
+            new { email = "unknown@example.invalid", password });
+        Check(wrongPassword.StatusCode == HttpStatusCode.Unauthorized &&
+              wrongEmail.StatusCode == HttpStatusCode.Unauthorized &&
+              await wrongPassword.Content.ReadAsStringAsync() == await wrongEmail.Content.ReadAsStringAsync(),
+            "Invalid credentials must return the same 401 response.");
+        Console.WriteLine("PASS A2-05: signed JWT claims/expiry, safe response and generic 401.");
+    }
 }
 finally
 {

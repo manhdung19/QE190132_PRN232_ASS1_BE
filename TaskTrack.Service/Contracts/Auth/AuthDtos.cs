@@ -18,3 +18,10 @@ public sealed class RegisterRequest : IValidatableObject
             yield return new ValidationResult("Password must contain at most 128 characters.", [nameof(Password)]);
     }
 }
+
+public sealed class LoginRequest
+{
+    private string _email = string.Empty;
+    [Required, EmailAddress] public string Email { get => _email; set => _email = value?.Trim() ?? string.Empty; }
+    [Required] public string Password { get; set; } = string.Empty;
+}
