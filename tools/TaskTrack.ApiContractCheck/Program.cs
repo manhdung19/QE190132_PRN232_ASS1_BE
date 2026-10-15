@@ -17,8 +17,8 @@ try
         if (matches.Count != 1) throw new InvalidOperationException("Invalid secret file format.");
         url = matches[0].Value;
     }
-    if (string.IsNullOrWhiteSpace(url)) throw new InvalidOperationException("Supply DATABASE_URL or --secret-file PATH.");
-    var rawConnectionString = PostgresConnection.FromUrl(url);
+    if (string.IsNullOrWhiteSpace(url) && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("A2_TEST_CONNECTION"))) throw new InvalidOperationException("Supply DATABASE_URL or --secret-file PATH.");
+    var rawConnectionString = TestAuth.ResolveConnectionString(url);
 
     var checks = 0;
     void Check(bool condition, string label)
@@ -48,6 +48,7 @@ try
     start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
     start.Environment["ASPNETCORE_URLS"] = address;
     start.Environment["Logging__LogLevel__Default"] = "None";
+    TestAuth.ConfigureHost(start);
 
     api = Process.Start(start) ?? throw new CheckFailure("API process startup");
     api.OutputDataReceived += (_, _) => { };
@@ -68,6 +69,7 @@ try
         await Task.Delay(250);
     }
     Check(ready, "API health check responds 200");
+    var staffToken = await TestAuth.LoginStaffAsync(client, "ApiContractCheck");
 
     // 2. Swagger Specification Verification
     using var swaggerResp = await client.GetAsync("/swagger/v1/swagger.json");
@@ -126,10 +128,21 @@ try
     {
         Check(paths.TryGetProperty(path, out var pathItem), $"Swagger path {path} exists");
         Check(pathItem.TryGetProperty(method, out var op), $"Swagger method {method.ToUpperInvariant()} on {path} exists");
-        Check(!op.TryGetProperty("security", out _), $"Endpoint {method.ToUpperInvariant()} {path} requires no authentication (public)");
+        var protectedWrite = method != "get";
+        var hasBearer = op.TryGetProperty("security", out var security) &&
+            security.EnumerateArray().Any(entry => entry.TryGetProperty("Bearer", out _));
+        Check(hasBearer == protectedWrite,
+            $"Endpoint {method.ToUpperInvariant()} {path} Bearer requirement matches access policy");
         foundOps++;
     }
     Check(foundOps == 24, "All 24 business endpoints verified in Swagger");
+    foreach (var method in new[] { "get", "put", "delete" })
+    {
+        var path = method == "get" ? "/api/accounts" : "/api/accounts/{id}";
+        Check(paths.GetProperty(path).GetProperty(method).GetProperty("security")
+            .EnumerateArray().Any(entry => entry.TryGetProperty("Bearer", out _)),
+            $"Account {method.ToUpperInvariant()} requires Bearer");
+    }
 
     // Swagger UI verification
     using var uiResp = await client.GetAsync("/swagger/index.html");
@@ -142,11 +155,14 @@ try
     using var preflightReq1 = new HttpRequestMessage(HttpMethod.Options, "/api/tasks");
     preflightReq1.Headers.Add("Origin", "http://localhost:3000");
     preflightReq1.Headers.Add("Access-Control-Request-Method", "POST");
-    preflightReq1.Headers.Add("Access-Control-Request-Headers", "content-type");
+    preflightReq1.Headers.Add("Access-Control-Request-Headers", "authorization,content-type");
     using var preflightResp1 = await client.SendAsync(preflightReq1);
     Check(preflightResp1.Headers.TryGetValues("Access-Control-Allow-Origin", out var allowOrigins1) &&
           allowOrigins1.Contains("http://localhost:3000"), "CORS preflight allows origin http://localhost:3000");
     Check(preflightResp1.Headers.Contains("Access-Control-Allow-Methods"), "CORS preflight specifies Access-Control-Allow-Methods");
+    Check(preflightResp1.Headers.TryGetValues("Access-Control-Allow-Headers", out var allowedHeaders) &&
+          allowedHeaders.Any(value => value.Contains("authorization", StringComparison.OrdinalIgnoreCase)),
+          "CORS preflight permits Authorization header");
 
     // Preflight OPTIONS with allowed origin 127.0.0.1:3000
     using var preflightReq2 = new HttpRequestMessage(HttpMethod.Options, "/api/projects");
@@ -192,7 +208,9 @@ try
     }
 
     // 404 on Tag DELETE (since Tag entity has no GET by ID endpoint)
-    using var tagNotFoundResp = await client.DeleteAsync("/api/tags/999999");
+    using var tagNotFoundReq = new HttpRequestMessage(HttpMethod.Delete, "/api/tags/999999");
+    TestAuth.Authorize(tagNotFoundReq, staffToken);
+    using var tagNotFoundResp = await client.SendAsync(tagNotFoundReq);
     Check(tagNotFoundResp.StatusCode == HttpStatusCode.NotFound, "DELETE /api/tags/999999 returns 404");
     var tagNotFoundBody = JsonDocument.Parse(await tagNotFoundResp.Content.ReadAsStringAsync()).RootElement;
     Check(tagNotFoundBody.GetProperty("status").GetInt32() == 404, "Tag 404 status is 404");
@@ -209,6 +227,7 @@ try
     })
     {
         var postReq = new HttpRequestMessage(HttpMethod.Post, postPath) { Content = JsonContent.Create(badBody) };
+        TestAuth.Authorize(postReq, staffToken);
         using var valResp = await client.SendAsync(postReq);
         Check(valResp.StatusCode == HttpStatusCode.BadRequest, $"POST {postPath} bad payload returns 400");
         Check(valResp.Content.Headers.ContentType?.MediaType == "application/problem+json", $"POST {postPath} content-type is application/problem+json");
@@ -223,6 +242,7 @@ try
     {
         Content = new StringContent("{ broken json : true ", System.Text.Encoding.UTF8, "application/json")
     };
+    TestAuth.Authorize(malformedReq, staffToken);
     using var malformedResp = await client.SendAsync(malformedReq);
     Check(malformedResp.StatusCode == HttpStatusCode.BadRequest, "Malformed JSON returns 400");
     var malformedRaw = await malformedResp.Content.ReadAsStringAsync();
@@ -232,6 +252,7 @@ try
 
     // Blocked delete check (operation constraint)
     var delReq = new HttpRequestMessage(HttpMethod.Delete, "/api/projects/1");
+    TestAuth.Authorize(delReq, staffToken);
     using var delResp = await client.SendAsync(delReq);
     Check(delResp.StatusCode == HttpStatusCode.BadRequest, "Blocked delete returns 400");
     var delBody = JsonDocument.Parse(await delResp.Content.ReadAsStringAsync()).RootElement;
@@ -271,6 +292,7 @@ try
     prodStart.Environment["Swagger__EnableInProduction"] = "true";
     prodStart.Environment["ASPNETCORE_URLS"] = prodAddress;
     prodStart.Environment["Logging__LogLevel__Default"] = "None";
+    TestAuth.ConfigureHost(prodStart);
 
     api = Process.Start(prodStart) ?? throw new CheckFailure("Production API process startup");
     api.OutputDataReceived += (_, _) => { };

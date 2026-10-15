@@ -175,25 +175,25 @@ Hệ thống cung cấp đủ 24 endpoint công khai, không yêu cầu đăng n
 Dự án cung cấp bộ công cụ console tự động kiểm thử toàn diện trên cơ sở dữ liệu thật:
 
 ```powershell
-# 1. Kiểm thử End-to-End toàn diện 24 endpoints và 53 quy tắc nghiệp vụ
-dotnet run --project tools/TaskTrack.FullE2ECheck -- --secret-file ../DATABASE_URL
+# Chạy toàn bộ hồi quy trên PostgreSQL tạm; tự import schema Ass1 và upgrade Ass2
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-AuthLocal.ps1 -Stage regression
 
-# 2. Kiểm thử hợp đồng API, Swagger, CORS và RFC 7807 ProblemDetails
-dotnet run --project tools/TaskTrack.ApiContractCheck -- --secret-file ../DATABASE_URL
+# Chạy từng nhóm Auth/Account trên PostgreSQL tạm
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-AuthLocal.ps1 -Stage register
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-AuthLocal.ps1 -Stage login
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-AuthLocal.ps1 -Stage authorization
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-AuthLocal.ps1 -Stage accounts
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-AuthLocal.ps1 -Stage swagger
 
-# 3. Kiểm thử riêng lẻ từng domain
-dotnet run --project tools/TaskTrack.TaskCheck -- --secret-file ../DATABASE_URL
-dotnet run --project tools/TaskTrack.TagCheck -- --secret-file ../DATABASE_URL
-dotnet run --project tools/TaskTrack.ProjectCheck -- --secret-file ../DATABASE_URL
-dotnet run --project tools/TaskTrack.DepartmentCheck -- --secret-file ../DATABASE_URL
-
-# 4. Kiểm thử nền tảng (in-memory DTO/Validation)
+# Kiểm thử nền tảng (in-memory DTO/Validation)
 dotnet run --project tools/TaskTrack.FoundationCheck
 ```
+
+Các công cụ hồi quy dùng tài khoản Staff test đăng ký/đăng nhập bằng JWT cho thao tác ghi; GET vẫn public. Script cần PostgreSQL 18 cài tại `C:\Program Files\PostgreSQL\18\bin` (có thể đổi qua `-PostgresBin`) và cổng test trống (mặc định `55434`, đổi qua `-Port`). Script tạo và xóa cluster test sau khi chạy. Không trỏ công cụ kiểm thử ghi dữ liệu vào database production.
 
 ---
 
 ## 7. Đánh giá và Hạn chế hiện tại
 
-- **Cơ sở dữ liệu:** Toàn bộ kiểm thử đã được xác thực trực tiếp và thành công 100% trên cơ sở dữ liệu PostgreSQL thật trên Render. Nếu cần chạy offline hoàn toàn trên instance PostgreSQL local độc lập, máy trạm cần cài đặt PostgreSQL server local và import file script SQL.
-- **Frontend & Deployment:** Backend đã sẵn sàng 100% để tích hợp với Frontend Next.js (Giai đoạn D) và triển khai Render Web Service (Giai đoạn E).
+- **Cơ sở dữ liệu:** Bộ hồi quy Assignment 2 chạy trên PostgreSQL local tạm. Việc nâng cấp và xác minh database production được thực hiện riêng khi triển khai.
+- **Frontend & Deployment:** Frontend được kiểm tra lint/build và auth client ở repo riêng. Xác minh toàn hệ thống trên môi trường live thuộc các task triển khai tiếp theo.

@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../TaskTrack.Repo/TaskTrack.Repo.csproj" />
+    <Compile Include="../TestSupport/TestAuth.cs" Link="TestAuth.cs" />
   </ItemGroup>
 </Project>

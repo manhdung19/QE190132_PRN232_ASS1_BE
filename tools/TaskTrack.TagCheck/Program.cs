@@ -20,8 +20,8 @@ try
         if (matches.Count != 1) throw new InvalidOperationException("Invalid secret file format.");
         url = matches[0].Value;
     }
-    if (string.IsNullOrWhiteSpace(url)) throw new InvalidOperationException("Supply DATABASE_URL or --secret-file PATH.");
-    var rawConnectionString = PostgresConnection.FromUrl(url);
+    if (string.IsNullOrWhiteSpace(url) && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("A2_TEST_CONNECTION"))) throw new InvalidOperationException("Supply DATABASE_URL or --secret-file PATH.");
+    var rawConnectionString = TestAuth.ResolveConnectionString(url);
     var connection = new NpgsqlConnectionStringBuilder(rawConnectionString)
     {
         Options = "-c default_transaction_read_only=on"
@@ -82,6 +82,7 @@ try
     start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
     start.Environment["ASPNETCORE_URLS"] = address;
     start.Environment["Logging__LogLevel__Default"] = "None";
+    TestAuth.ConfigureHost(start);
     api = Process.Start(start) ?? throw new CheckFailure("API process startup");
     api.OutputDataReceived += (_, _) => { };
     api.ErrorDataReceived += (_, _) => { };
@@ -100,6 +101,7 @@ try
         await Task.Delay(250);
     }
     Check(ready, "Actual API starts");
+    var staffToken = await TestAuth.LoginStaffAsync(client, "TagCheck");
 
     async Task<JsonElement> Get(string path, HttpStatusCode status = HttpStatusCode.OK)
     {
@@ -117,6 +119,7 @@ try
             var json = JsonSerializer.Serialize(payload);
             message.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
         }
+        TestAuth.Authorize(message, staffToken);
         var response = await client.SendAsync(message);
         var content = await response.Content.ReadAsStringAsync();
         JsonElement root = default;

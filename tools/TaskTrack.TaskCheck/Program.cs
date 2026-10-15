@@ -21,8 +21,8 @@ try
         if (matches.Count != 1) throw new InvalidOperationException("Invalid secret file format.");
         url = matches[0].Value;
     }
-    if (string.IsNullOrWhiteSpace(url)) throw new InvalidOperationException("Supply DATABASE_URL or --secret-file PATH.");
-    var rawConnectionString = PostgresConnection.FromUrl(url);
+    if (string.IsNullOrWhiteSpace(url) && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("A2_TEST_CONNECTION"))) throw new InvalidOperationException("Supply DATABASE_URL or --secret-file PATH.");
+    var rawConnectionString = TestAuth.ResolveConnectionString(url);
     var connection = new NpgsqlConnectionStringBuilder(rawConnectionString)
     {
         Options = "-c default_transaction_read_only=on"
@@ -91,6 +91,7 @@ try
     start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
     start.Environment["ASPNETCORE_URLS"] = address;
     start.Environment["Logging__LogLevel__Default"] = "None";
+    TestAuth.ConfigureHost(start);
 
     api = Process.Start(start) ?? throw new CheckFailure("API process startup");
     api.OutputDataReceived += (_, _) => { };
@@ -111,6 +112,7 @@ try
         await Task.Delay(250);
     }
     Check(ready, "API health check responds 200");
+    var staffToken = await TestAuth.LoginStaffAsync(client, "TaskCheck");
 
     async Task<JsonElement> Get(string path, HttpStatusCode expected = HttpStatusCode.OK)
     {
@@ -126,6 +128,7 @@ try
         {
             Content = JsonContent.Create(body)
         };
+        TestAuth.Authorize(request, staffToken);
         var response = await client.SendAsync(request);
         var content = await response.Content.ReadAsStringAsync();
         var json = string.IsNullOrWhiteSpace(content) ? default : JsonDocument.Parse(content).RootElement;

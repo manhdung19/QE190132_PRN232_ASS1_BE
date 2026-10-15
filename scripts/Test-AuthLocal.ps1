@@ -1,6 +1,6 @@
 # Creates a disposable local PostgreSQL cluster and runs the selected auth stage.
 param(
-    [ValidateSet('register', 'login', 'authorization', 'accounts', 'swagger')][string]$Stage = 'register',
+    [ValidateSet('register', 'login', 'authorization', 'accounts', 'swagger', 'regression', 'regression-task')][string]$Stage = 'register',
     [string]$PostgresBin = 'C:\Program Files\PostgreSQL\18\bin',
     [int]$Port = 55434
 )
@@ -31,8 +31,20 @@ try {
         & dotnet build 'tools/TaskTrack.AdminSeed/TaskTrack.AdminSeed.csproj' -m:1 -v quiet -p:UseSharedCompilation=false -p:NuGetAudit=false --ignore-failed-sources
         if ($LASTEXITCODE -ne 0) { throw 'AdminSeed build failed' }
     }
-    & dotnet run --project 'tools/TaskTrack.AuthCheck/TaskTrack.AuthCheck.csproj' --no-build -- $Stage
-    if ($LASTEXITCODE -ne 0) { throw "AuthCheck stage $Stage failed" }
+    if ($Stage -in @('regression', 'regression-task')) {
+        $checks = if ($Stage -eq 'regression-task') { @('TaskCheck') } else { @('FullE2ECheck', 'ApiContractCheck', 'DepartmentCheck', 'ProjectCheck', 'TagCheck', 'TaskCheck') }
+        foreach ($name in $checks) {
+            $project = "tools/TaskTrack.$name/TaskTrack.$name.csproj"
+            & dotnet build $project -m:1 -v quiet -p:UseSharedCompilation=false -p:NuGetAudit=false --ignore-failed-sources
+            if ($LASTEXITCODE -ne 0) { throw "$name build failed" }
+            & dotnet run --project $project --no-build
+            if ($LASTEXITCODE -ne 0) { throw "$name regression failed" }
+        }
+    }
+    else {
+        & dotnet run --project 'tools/TaskTrack.AuthCheck/TaskTrack.AuthCheck.csproj' --no-build -- $Stage
+        if ($LASTEXITCODE -ne 0) { throw "AuthCheck stage $Stage failed" }
+    }
 }
 finally {
     if ($started) { & (Join-Path $PostgresBin 'pg_ctl.exe') -D (Join-Path $testRoot 'data') stop -m fast | Out-Null }
