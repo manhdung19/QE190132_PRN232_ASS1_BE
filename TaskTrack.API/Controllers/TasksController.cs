@@ -44,7 +44,7 @@ public sealed class TasksController(ITaskService service) : ControllerBase
         if (!int.TryParse(User.FindFirst("accountId")?.Value, out var accountId) || accountId <= 0)
             return Unauthorized();
         var created = await service.CreateAsync(request, accountId, cancellationToken);
-        return CreatedAtAction(nameof(GetById), new { id = created.TaskId }, created);
+        return Created($"/api/tasks/{created.TaskId}", created);
     }
 
     [HttpPut("{id:int}")]
