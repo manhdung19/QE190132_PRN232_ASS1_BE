@@ -50,6 +50,8 @@ Backend hỗ trợ định dạng URL kết nối của PostgreSQL (`postgres://
 
 Trước khi chạy bản Assignment 2, áp dụng `database/Assignment2_Upgrade.sql` **một lần** trên DB Assignment 1. Đừng chạy lại script import cũ vì nó xóa các bảng.
 
+Quy trình backup, nâng schema, cấu hình Render/Vercel, seed Admin, smoke test và rollback: [Runbook triển khai Assignment 2](docs/ASSIGNMENT2-DEPLOYMENT-RUNBOOK.md). Tài liệu là hướng dẫn cho A2-17; chưa xác nhận đã triển khai live.
+
 Đặt `JWT_SECRET` dài tối thiểu 32 byte UTF-8 qua biến môi trường hoặc cấu hình development riêng, không commit giá trị thật. API sẽ từ chối khởi động nếu thiếu secret.
 
 ### 2.2 Chạy ứng dụng
@@ -107,9 +109,9 @@ Trong môi trường tự động hóa an toàn, tùy chọn `--password-stdin` 
 
 ---
 
-## 4. Danh sách 24 Endpoint công khai
+## 4. Danh sách 24 Endpoint nghiệp vụ
 
-Hệ thống cung cấp đủ 24 endpoint công khai, không yêu cầu đăng nhập/token:
+Hệ thống cung cấp 24 endpoint nghiệp vụ. Các GET công khai; POST/PUT/DELETE yêu cầu Bearer token của Staff hoặc Admin. API tài khoản chỉ dành cho Admin.
 
 ### Nhóm Department (6 endpoints)
 1. `GET /api/departments` — Lấy danh sách phòng ban đang hoạt động (`IsActive = true`).
