@@ -34,7 +34,7 @@ public sealed class DepartmentsController(IDepartmentService service) : Controll
         [FromBody] DepartmentCreateRequest request, CancellationToken cancellationToken)
     {
         var created = await service.CreateAsync(request, cancellationToken);
-        return CreatedAtAction(nameof(GetById), new { id = created.DepartmentId }, created);
+        return Created($"/api/departments/{created.DepartmentId}", created);
     }
 
     [HttpPut("{id:int}")]

@@ -42,7 +42,7 @@ public sealed class ProjectsController(IProjectService service) : ControllerBase
         [FromBody] ProjectCreateRequest request, CancellationToken cancellationToken)
     {
         var created = await service.CreateAsync(request, cancellationToken);
-        return CreatedAtAction(nameof(GetById), new { id = created.ProjectId }, created);
+        return Created($"/api/projects/{created.ProjectId}", created);
     }
 
     [HttpPut("{id:int}")]
